@@ -3,6 +3,7 @@ export declare class GoodsReceiptItemEntity {
     itemId: string;
     grId: string;
     productId: string;
+    variantId: string | null;
     unit: string;
     unitPerBase: number;
     qtyOrdered: number;

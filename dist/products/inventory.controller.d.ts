@@ -18,32 +18,34 @@ export declare class InventoryController {
     }>;
     importInventory(currentUser: IUser, dto: ImportInventoryDto): Promise<{
         productId: string;
+        variantId: string | null;
         quantityAvailable: number;
+        targetQuantity: number;
         transactionId: string;
     }>;
     adjustInventory(currentUser: IUser, dto: AdjustInventoryDto): Promise<{
         productId: string;
+        variantId: string | null;
         previousQuantity: number;
         currentQuantity: number;
+        quantityAvailable: number;
         quantityChange: number;
         transactionId: string;
     }>;
     recordDamage(currentUser: IUser, dto: RecordDamageDto): Promise<{
         productId: string;
+        variantId: string | null;
         quantityAvailable: number;
+        targetQuantity: number;
         transactionId: string;
     }>;
     recordReturn(currentUser: IUser, dto: RecordReturnDto): Promise<{
         productId: string;
+        variantId: string | null;
         quantityAvailable: number;
+        targetQuantity: number;
         transactionId: string;
     }>;
     getInventorySummary(): Promise<any[]>;
-    getLowStockProducts(threshold?: string): Promise<{
-        productId: string;
-        productName: string;
-        quantityAvailable: number;
-        unit: string | null;
-        barcode: string | null;
-    }[]>;
+    getLowStockProducts(threshold?: string): Promise<any[]>;
 }

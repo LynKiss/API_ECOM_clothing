@@ -16,6 +16,10 @@ export class QueryInventoryTransactionsDto {
   productId?: string;
 
   @IsOptional()
+  @IsString()
+  variantId?: string;
+
+  @IsOptional()
   @IsEnum(InventoryTransactionType)
   transactionType?: InventoryTransactionType;
 

@@ -16,6 +16,7 @@ let GoodsReceiptItemEntity = class GoodsReceiptItemEntity {
     itemId;
     grId;
     productId;
+    variantId;
     unit;
     unitPerBase;
     qtyOrdered;
@@ -42,6 +43,10 @@ __decorate([
     (0, typeorm_1.Column)({ name: 'product_id', type: 'char', length: 36 }),
     __metadata("design:type", String)
 ], GoodsReceiptItemEntity.prototype, "productId", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ name: 'variant_id', type: 'char', length: 36, nullable: true }),
+    __metadata("design:type", Object)
+], GoodsReceiptItemEntity.prototype, "variantId", void 0);
 __decorate([
     (0, typeorm_1.Column)({ name: 'unit', type: 'varchar', length: 50, default: 'cái' }),
     __metadata("design:type", String)

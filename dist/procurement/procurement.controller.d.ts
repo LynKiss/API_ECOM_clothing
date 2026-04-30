@@ -32,6 +32,7 @@ export declare class ProcurementController {
     createGr(dto: CreateGrDto, req: any): Promise<import("./entities/goods-receipt.entity").GoodsReceiptEntity>;
     previewCost(dto: CreateGrDto): {
         productId: string;
+        variantId: string | null;
         qtyReceived: number;
         qtyReturned: number;
         qtyGood: number;

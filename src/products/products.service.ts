@@ -27,7 +27,10 @@ import {
   InventoryAdjustmentMode,
 } from './dto/adjust-inventory.dto';
 import { CreateColorDto } from './dto/create-color.dto';
-import { CreateProductDto } from './dto/create-product.dto';
+import {
+  CreateProductDto,
+  CreateProductVariantDto,
+} from './dto/create-product.dto';
 import { CreateSizeDto } from './dto/create-size.dto';
 import { ImportInventoryDto } from './dto/import-inventory.dto';
 import { QueryInventoryTransactionsDto } from './dto/query-inventory-transactions.dto';
@@ -114,13 +117,25 @@ export class ProductsService {
     em: EntityManager,
     productId: string,
     qtyDelta: number,
+    variantId?: string | null,
   ): Promise<void> {
     if (qtyDelta === 0) return;
     const warehouse = await em.findOne(WarehouseEntity, { where: { isDefault: true } });
     if (!warehouse) return;
-    const stock = await em.findOne(WarehouseStockEntity, {
-      where: { warehouseId: warehouse.warehouseId, productId },
-    });
+    const stockQuery = em
+      .createQueryBuilder(WarehouseStockEntity, 'stock')
+      .where('stock.warehouse_id = :warehouseId', {
+        warehouseId: warehouse.warehouseId,
+      })
+      .andWhere('stock.product_id = :productId', { productId });
+
+    if (variantId) {
+      stockQuery.andWhere('stock.variant_id = :variantId', { variantId });
+    } else {
+      stockQuery.andWhere('stock.variant_id IS NULL');
+    }
+
+    const stock = await stockQuery.getOne();
     if (stock) {
       stock.quantity = Math.max(0, stock.quantity + qtyDelta);
       await em.save(WarehouseStockEntity, stock);
@@ -128,6 +143,7 @@ export class ProductsService {
       await em.save(WarehouseStockEntity, em.create(WarehouseStockEntity, {
         warehouseId: warehouse.warehouseId,
         productId,
+        variantId: variantId ?? null,
         quantity: qtyDelta,
       }));
     }
@@ -337,6 +353,7 @@ export class ProductsService {
       await this.ensureOriginExists(createProductDto.originId);
     }
     await this.ensureUniqueFields(createProductDto);
+    await this.ensureTagsExist(createProductDto.tagIds ?? []);
 
     if (
       createProductDto.productPriceSale != null &&
@@ -344,6 +361,16 @@ export class ProductsService {
     ) {
       throw new BadRequestException('Sale price cannot exceed regular price');
     }
+
+    const preparedVariants = await this.prepareCreateVariants(
+      createProductDto.variants ?? [],
+      createProductDto.productPrice,
+    );
+    const variantStock = preparedVariants.reduce(
+      (sum, variant) => sum + (variant.stockQuantity ?? 0),
+      0,
+    );
+    const baseStock = createProductDto.quantityAvailable ?? 0;
 
     const product = this.productsRepository.create({
       productId: createProductDto.productId ?? randomUUID(),
@@ -356,7 +383,7 @@ export class ProductsService {
       originId: createProductDto.originId ?? null,
       productPrice: createProductDto.productPrice,
       productPriceSale: createProductDto.productPriceSale ?? null,
-      quantityAvailable: createProductDto.quantityAvailable ?? 0,
+      quantityAvailable: baseStock + variantStock,
       description: createProductDto.description ?? null,
       ratingAverage: '0',
       ratingCount: 0,
@@ -371,11 +398,40 @@ export class ProductsService {
       boxBarcode: createProductDto.boxBarcode ?? null,
     });
 
-    const saved = await this.productsRepository.save(product);
+    const saved = await this.dataSource.transaction(async (em) => {
+      const savedProduct = await em.save(ProductEntity, product);
+
+      if ((createProductDto.tagIds ?? []).length > 0) {
+        await em.save(
+          ProductTagEntity,
+          createProductDto.tagIds!.map((tagId) =>
+            em.create(ProductTagEntity, {
+              productId: savedProduct.productId,
+              tagId,
+            }),
+          ),
+        );
+      }
+
+      if (preparedVariants.length > 0) {
+        await em.save(
+          ProductVariantEntity,
+          preparedVariants.map((variant) =>
+            em.create(ProductVariantEntity, {
+              ...variant,
+              productId: savedProduct.productId,
+            }),
+          ),
+        );
+      }
+
+      return savedProduct;
+    });
+
     void this.notificationsService.createNotification({
       channel: NotificationChannel.SYSTEM,
-      title: 'Sáº£n pháº©m má»›i Ä‘Æ°á»£c thÃªm',
-      message: `Sáº£n pháº©m "${saved.productName}" Ä‘Ã£ Ä‘Æ°á»£c thÃªm vÃ o há»‡ thá»‘ng.`,
+      title: 'Sản phẩm mới được thêm',
+      message: `Sản phẩm "${saved.productName}" đã được thêm vào hệ thống.`,
       metadata: { productId: saved.productId, type: 'product_created' },
     });
     return saved;
@@ -459,8 +515,8 @@ export class ProductsService {
     const updated = await this.productsRepository.save(product);
     void this.notificationsService.createNotification({
       channel: NotificationChannel.SYSTEM,
-      title: 'Sáº£n pháº©m Ä‘Æ°á»£c cáº­p nháº­t',
-      message: `Sáº£n pháº©m "${updated.productName}" Ä‘Ã£ Ä‘Æ°á»£c cáº­p nháº­t.`,
+      title: 'Sản phẩm được cập nhật',
+      message: `Sản phẩm "${updated.productName}" đã được cập nhật.`,
       metadata: { productId: updated.productId, type: 'product_updated' },
     });
     return updated;
@@ -475,8 +531,8 @@ export class ProductsService {
     await this.productsRepository.remove(product);
     void this.notificationsService.createNotification({
       channel: NotificationChannel.SYSTEM,
-      title: 'Sáº£n pháº©m bá»‹ xÃ³a',
-      message: `Sáº£n pháº©m "${name}" Ä‘Ã£ bá»‹ xÃ³a khá»i há»‡ thá»‘ng.`,
+      title: 'Sản phẩm bị xóa',
+      message: `Sản phẩm "${name}" đã bị xóa khỏi hệ thống.`,
       metadata: { type: 'product_deleted' },
     });
     return { success: true };
@@ -573,7 +629,13 @@ export class ProductsService {
       isActive: dto.isActive ?? true,
     });
 
-    await this.productVariantsRepository.save(variant);
+    await this.dataSource.transaction(async (em) => {
+      await em.save(ProductVariantEntity, variant);
+      if (variant.stockQuantity > 0) {
+        product.quantityAvailable += variant.stockQuantity;
+        await em.save(ProductEntity, product);
+      }
+    });
     return this.getVariantDetail(productId, variant.variantId);
   }
 
@@ -604,11 +666,22 @@ export class ProductsService {
     if (dto.barcode !== undefined) variant.barcode = dto.barcode.trim() || null;
     if (dto.price !== undefined) variant.price = dto.price || null;
     if (dto.salePrice !== undefined) variant.salePrice = dto.salePrice || null;
+    const previousStockQuantity = variant.stockQuantity;
     if (dto.stockQuantity !== undefined) variant.stockQuantity = dto.stockQuantity;
     if (dto.weightGrams !== undefined) variant.weightGrams = dto.weightGrams ?? null;
     if (dto.isActive !== undefined) variant.isActive = dto.isActive;
 
-    await this.productVariantsRepository.save(variant);
+    await this.dataSource.transaction(async (em) => {
+      await em.save(ProductVariantEntity, variant);
+      const stockDelta = variant.stockQuantity - previousStockQuantity;
+      if (stockDelta !== 0) {
+        product.quantityAvailable += stockDelta;
+        if (product.quantityAvailable < 0) {
+          throw new BadRequestException('Quantity exceeds available stock');
+        }
+        await em.save(ProductEntity, product);
+      }
+    });
     return this.getVariantDetail(productId, variantId);
   }
 
@@ -843,23 +916,37 @@ export class ProductsService {
     importInventoryDto: ImportInventoryDto,
   ) {
     await this.ensureUserExists(performedBy);
-    const product = await this.productsRepository.findOneBy({
-      productId: importInventoryDto.productId,
-    });
-    if (!product) {
-      throw new NotFoundException('Product not found');
-    }
-
+    let result: {
+      productId: string;
+      variantId: string | null;
+      quantityAvailable: number;
+      targetQuantity: number;
+      transactionId: string;
+    };
     let transactionId: string;
     await this.dataSource.transaction(async (em) => {
+      const { product, variant } = await this.getInventoryTarget(
+        em,
+        importInventoryDto.productId,
+        importInventoryDto.variantId,
+      );
+      const quantityBefore = variant?.stockQuantity ?? product.quantityAvailable;
+
       product.quantityAvailable += importInventoryDto.quantity;
+      if (variant) {
+        variant.stockQuantity += importInventoryDto.quantity;
+        await em.save(ProductVariantEntity, variant);
+      }
       await em.save(ProductEntity, product);
 
       const tx = em.create(InventoryTransactionEntity, {
         productId: product.productId,
+        variantId: variant?.variantId ?? null,
         performedBy,
         transactionType: InventoryTransactionType.IMPORT,
         quantityChange: importInventoryDto.quantity,
+        quantityBefore,
+        quantityAfter: variant?.stockQuantity ?? product.quantityAvailable,
         note: importInventoryDto.note ?? 'Import inventory by admin',
         relatedOrderId: null,
       });
@@ -870,14 +957,19 @@ export class ProductsService {
         em,
         product.productId,
         importInventoryDto.quantity,
+        variant?.variantId ?? null,
       );
+
+      result = {
+        productId: product.productId,
+        variantId: variant?.variantId ?? null,
+        quantityAvailable: product.quantityAvailable,
+        targetQuantity: variant?.stockQuantity ?? product.quantityAvailable,
+        transactionId,
+      };
     });
 
-    return {
-      productId: product.productId,
-      quantityAvailable: product.quantityAvailable,
-      transactionId: transactionId!,
-    };
+    return result!;
   }
 
   async adjustInventory(
@@ -885,39 +977,57 @@ export class ProductsService {
     adjustInventoryDto: AdjustInventoryDto,
   ) {
     await this.ensureUserExists(performedBy);
-    const product = await this.productsRepository.findOneBy({
-      productId: adjustInventoryDto.productId,
-    });
-    if (!product) {
-      throw new NotFoundException('Product not found');
-    }
-
-    const previousQuantity = product.quantityAvailable;
-    let quantityChange = 0;
-
-    if (adjustInventoryDto.mode === InventoryAdjustmentMode.SET) {
-      quantityChange = adjustInventoryDto.quantity - previousQuantity;
-      product.quantityAvailable = adjustInventoryDto.quantity;
-    } else if (adjustInventoryDto.mode === InventoryAdjustmentMode.INCREASE) {
-      quantityChange = adjustInventoryDto.quantity;
-      product.quantityAvailable += adjustInventoryDto.quantity;
-    } else if (adjustInventoryDto.mode === InventoryAdjustmentMode.DECREASE) {
-      if (adjustInventoryDto.quantity > product.quantityAvailable) {
-        throw new BadRequestException('Quantity exceeds available stock');
-      }
-      quantityChange = -adjustInventoryDto.quantity;
-      product.quantityAvailable -= adjustInventoryDto.quantity;
-    }
-
+    let result: {
+      productId: string;
+      variantId: string | null;
+      previousQuantity: number;
+      currentQuantity: number;
+      quantityAvailable: number;
+      quantityChange: number;
+      transactionId: string;
+    };
     let transactionId: string;
     await this.dataSource.transaction(async (em) => {
+      const { product, variant } = await this.getInventoryTarget(
+        em,
+        adjustInventoryDto.productId,
+        adjustInventoryDto.variantId,
+      );
+      const previousQuantity = variant?.stockQuantity ?? product.quantityAvailable;
+      let quantityChange = 0;
+
+      if (adjustInventoryDto.mode === InventoryAdjustmentMode.SET) {
+        quantityChange = adjustInventoryDto.quantity - previousQuantity;
+      } else if (adjustInventoryDto.mode === InventoryAdjustmentMode.INCREASE) {
+        quantityChange = adjustInventoryDto.quantity;
+      } else if (adjustInventoryDto.mode === InventoryAdjustmentMode.DECREASE) {
+        if (adjustInventoryDto.quantity > previousQuantity) {
+          throw new BadRequestException('Quantity exceeds available stock');
+        }
+        quantityChange = -adjustInventoryDto.quantity;
+      }
+
+      product.quantityAvailable += quantityChange;
+      if (product.quantityAvailable < 0) {
+        throw new BadRequestException('Quantity exceeds available stock');
+      }
+      if (variant) {
+        variant.stockQuantity += quantityChange;
+        if (variant.stockQuantity < 0) {
+          throw new BadRequestException('Quantity exceeds available stock');
+        }
+        await em.save(ProductVariantEntity, variant);
+      }
       await em.save(ProductEntity, product);
 
       const tx = em.create(InventoryTransactionEntity, {
         productId: product.productId,
+        variantId: variant?.variantId ?? null,
         performedBy,
         transactionType: InventoryTransactionType.ADJUSTMENT,
         quantityChange,
+        quantityBefore: previousQuantity,
+        quantityAfter: variant?.stockQuantity ?? product.quantityAvailable,
         note:
           adjustInventoryDto.note ??
           `Adjustment mode: ${adjustInventoryDto.mode}`,
@@ -930,42 +1040,59 @@ export class ProductsService {
         em,
         product.productId,
         quantityChange,
+        variant?.variantId ?? null,
       );
+
+      result = {
+        productId: product.productId,
+        variantId: variant?.variantId ?? null,
+        previousQuantity,
+        currentQuantity: variant?.stockQuantity ?? product.quantityAvailable,
+        quantityAvailable: product.quantityAvailable,
+        quantityChange,
+        transactionId,
+      };
     });
 
-    return {
-      productId: product.productId,
-      previousQuantity,
-      currentQuantity: product.quantityAvailable,
-      quantityChange,
-      transactionId: transactionId!,
-    };
+    return result!;
   }
 
   async recordDamage(performedBy: string, dto: RecordDamageDto) {
     await this.ensureUserExists(performedBy);
-    const product = await this.productsRepository.findOneBy({
-      productId: dto.productId,
-    });
-    if (!product) {
-      throw new NotFoundException('Product not found');
-    }
-
-    if (dto.quantity > product.quantityAvailable) {
-      throw new BadRequestException('Damage quantity exceeds available stock');
-    }
-
-    product.quantityAvailable -= dto.quantity;
-
+    let result: {
+      productId: string;
+      variantId: string | null;
+      quantityAvailable: number;
+      targetQuantity: number;
+      transactionId: string;
+    };
     let transactionId: string;
     await this.dataSource.transaction(async (em) => {
+      const { product, variant } = await this.getInventoryTarget(
+        em,
+        dto.productId,
+        dto.variantId,
+      );
+      const quantityBefore = variant?.stockQuantity ?? product.quantityAvailable;
+      if (dto.quantity > quantityBefore) {
+        throw new BadRequestException('Damage quantity exceeds available stock');
+      }
+
+      product.quantityAvailable -= dto.quantity;
+      if (variant) {
+        variant.stockQuantity -= dto.quantity;
+        await em.save(ProductVariantEntity, variant);
+      }
       await em.save(ProductEntity, product);
 
       const tx = em.create(InventoryTransactionEntity, {
         productId: product.productId,
+        variantId: variant?.variantId ?? null,
         performedBy,
         transactionType: InventoryTransactionType.DAMAGE,
         quantityChange: -dto.quantity,
+        quantityBefore,
+        quantityAfter: variant?.stockQuantity ?? product.quantityAvailable,
         note: dto.note ?? 'Damaged apparel item recorded',
         relatedOrderId: null,
       });
@@ -976,50 +1103,77 @@ export class ProductsService {
         em,
         product.productId,
         -dto.quantity,
+        variant?.variantId ?? null,
       );
+
+      result = {
+        productId: product.productId,
+        variantId: variant?.variantId ?? null,
+        quantityAvailable: product.quantityAvailable,
+        targetQuantity: variant?.stockQuantity ?? product.quantityAvailable,
+        transactionId,
+      };
     });
 
-    return {
-      productId: product.productId,
-      quantityAvailable: product.quantityAvailable,
-      transactionId: transactionId!,
-    };
+    return result!;
   }
 
   async recordReturn(performedBy: string, dto: RecordReturnDto) {
     await this.ensureUserExists(performedBy);
-    const product = await this.productsRepository.findOneBy({
-      productId: dto.productId,
-    });
-    if (!product) {
-      throw new NotFoundException('Product not found');
-    }
-
-    product.quantityAvailable += dto.quantity;
-
+    let result: {
+      productId: string;
+      variantId: string | null;
+      quantityAvailable: number;
+      targetQuantity: number;
+      transactionId: string;
+    };
     let transactionId: string;
     await this.dataSource.transaction(async (em) => {
+      const { product, variant } = await this.getInventoryTarget(
+        em,
+        dto.productId,
+        dto.variantId,
+      );
+      const quantityBefore = variant?.stockQuantity ?? product.quantityAvailable;
+
+      product.quantityAvailable += dto.quantity;
+      if (variant) {
+        variant.stockQuantity += dto.quantity;
+        await em.save(ProductVariantEntity, variant);
+      }
       await em.save(ProductEntity, product);
 
       const tx = em.create(InventoryTransactionEntity, {
         productId: product.productId,
+        variantId: variant?.variantId ?? null,
         performedBy,
         transactionType: InventoryTransactionType.RETURN_IN,
         quantityChange: dto.quantity,
+        quantityBefore,
+        quantityAfter: variant?.stockQuantity ?? product.quantityAvailable,
         note: dto.note ?? 'Return goods recorded',
         relatedOrderId: dto.relatedOrderId ?? null,
       });
       const saved = await em.save(InventoryTransactionEntity, tx);
       transactionId = saved.transactionId;
 
-      await this.syncDefaultWarehouseStock(em, product.productId, dto.quantity);
+      await this.syncDefaultWarehouseStock(
+        em,
+        product.productId,
+        dto.quantity,
+        variant?.variantId ?? null,
+      );
+
+      result = {
+        productId: product.productId,
+        variantId: variant?.variantId ?? null,
+        quantityAvailable: product.quantityAvailable,
+        targetQuantity: variant?.stockQuantity ?? product.quantityAvailable,
+        transactionId,
+      };
     });
 
-    return {
-      productId: product.productId,
-      quantityAvailable: product.quantityAvailable,
-      transactionId: transactionId!,
-    };
+    return result!;
   }
 
   async findInventoryTransactions(query: QueryInventoryTransactionsDto) {
@@ -1038,15 +1192,29 @@ export class ProductsService {
         'user',
         'user.user_id = transaction.performed_by',
       )
+      .leftJoin(
+        ProductVariantEntity,
+        'variant',
+        'variant.variant_id = transaction.variant_id',
+      )
+      .leftJoin(ColorEntity, 'color', 'color.color_id = variant.color_id')
+      .leftJoin(SizeEntity, 'size', 'size.size_id = variant.size_id')
       .select([
         'transaction.transactionId AS id',
         'transaction.productId AS productId',
+        'transaction.variantId AS variantId',
         'transaction.transactionType AS transactionType',
         'transaction.quantityChange AS quantityChange',
+        'transaction.quantityBefore AS quantityBefore',
+        'transaction.quantityAfter AS quantityAfter',
         'transaction.note AS note',
         'transaction.relatedOrderId AS relatedOrderId',
         'transaction.createdAt AS createdAt',
         'product.product_name AS productName',
+        'variant.sku AS variantSku',
+        'variant.barcode AS variantBarcode',
+        'color.color_name AS colorName',
+        'size.size_name AS sizeName',
       ])
       .addSelect(
         'COALESCE(user.username, user.email, transaction.performed_by)',
@@ -1056,6 +1224,12 @@ export class ProductsService {
     if (query.productId) {
       queryBuilder.andWhere('transaction.product_id = :productId', {
         productId: query.productId,
+      });
+    }
+
+    if (query.variantId) {
+      queryBuilder.andWhere('transaction.variant_id = :variantId', {
+        variantId: query.variantId,
       });
     }
 
@@ -1106,11 +1280,16 @@ export class ProductsService {
   }
 
   async getInventorySummary() {
-    const results = await this.productsRepository
+    const productRows = await this.productsRepository
       .createQueryBuilder('product')
       .select([
+        "'product' AS rowType",
         'product.product_id AS productId',
+        'NULL AS variantId',
         'product.product_name AS productName',
+        'NULL AS variantSku',
+        'NULL AS colorName',
+        'NULL AS sizeName',
         'product.quantity_available AS quantityAvailable',
         'product.barcode AS barcode',
         'product.unit AS unit',
@@ -1130,31 +1309,113 @@ export class ProductsService {
       .leftJoin(
         'inventory_transactions',
         't',
-        't.product_id = product.product_id',
+        't.product_id = product.product_id AND t.variant_id IS NULL',
       )
       .where('product.is_show = :isShow', { isShow: true })
       .groupBy('product.product_id')
       .orderBy('product.product_name', 'ASC')
       .getRawMany();
 
-    return results;
+    const variantRows = await this.productVariantsRepository
+      .createQueryBuilder('variant')
+      .innerJoin(ProductEntity, 'product', 'product.product_id = variant.product_id')
+      .leftJoin(ColorEntity, 'color', 'color.color_id = variant.color_id')
+      .leftJoin(SizeEntity, 'size', 'size.size_id = variant.size_id')
+      .leftJoin(
+        'inventory_transactions',
+        't',
+        't.variant_id = variant.variant_id',
+      )
+      .select([
+        "'variant' AS rowType",
+        'product.product_id AS productId',
+        'variant.variant_id AS variantId',
+        'product.product_name AS productName',
+        'variant.sku AS variantSku',
+        'color.color_name AS colorName',
+        'size.size_name AS sizeName',
+        'variant.stock_quantity AS quantityAvailable',
+        'variant.barcode AS barcode',
+        'product.unit AS unit',
+      ])
+      .addSelect(
+        `COALESCE(SUM(CASE WHEN t.transaction_type = 'import' THEN t.quantity_change ELSE 0 END), 0)`,
+        'totalImported',
+      )
+      .addSelect(
+        `COALESCE(SUM(CASE WHEN t.transaction_type = 'damage' THEN ABS(t.quantity_change) ELSE 0 END), 0)`,
+        'totalDamaged',
+      )
+      .addSelect(
+        `COALESCE(SUM(CASE WHEN t.transaction_type = 'export' THEN ABS(t.quantity_change) ELSE 0 END), 0)`,
+        'totalExported',
+      )
+      .where('product.is_show = :isShow', { isShow: true })
+      .andWhere('variant.is_active = :isActive', { isActive: true })
+      .groupBy('variant.variant_id')
+      .orderBy('product.product_name', 'ASC')
+      .addOrderBy('color.color_name', 'ASC')
+      .addOrderBy('size.sort_order', 'ASC')
+      .getRawMany();
+
+    return [...productRows, ...variantRows];
   }
 
   async getLowStockProducts(threshold = 10) {
-    const products = await this.productsRepository
+    const productsWithoutVariants = await this.productsRepository
       .createQueryBuilder('product')
       .where('product.quantity_available <= :threshold', { threshold })
       .andWhere('product.is_show = :isShow', { isShow: true })
+      .andWhere((qb) => {
+        const subQuery = qb
+          .subQuery()
+          .select('1')
+          .from(ProductVariantEntity, 'variant')
+          .where('variant.product_id = product.product_id')
+          .getQuery();
+        return `NOT EXISTS ${subQuery}`;
+      })
       .orderBy('product.quantity_available', 'ASC')
       .getMany();
 
-    return products.map((p) => ({
+    const productRows = productsWithoutVariants.map((p) => ({
+      rowType: 'product',
       productId: p.productId,
+      variantId: null,
       productName: p.productName,
+      variantSku: null,
+      colorName: null,
+      sizeName: null,
       quantityAvailable: p.quantityAvailable,
       unit: p.unit,
       barcode: p.barcode,
     }));
+
+    const variantRows = await this.productVariantsRepository
+      .createQueryBuilder('variant')
+      .innerJoin(ProductEntity, 'product', 'product.product_id = variant.product_id')
+      .leftJoin(ColorEntity, 'color', 'color.color_id = variant.color_id')
+      .leftJoin(SizeEntity, 'size', 'size.size_id = variant.size_id')
+      .select([
+        "'variant' AS rowType",
+        'product.product_id AS productId',
+        'variant.variant_id AS variantId',
+        'product.product_name AS productName',
+        'variant.sku AS variantSku',
+        'color.color_name AS colorName',
+        'size.size_name AS sizeName',
+        'variant.stock_quantity AS quantityAvailable',
+        'product.unit AS unit',
+        'variant.barcode AS barcode',
+      ])
+      .where('product.is_show = :isShow', { isShow: true })
+      .andWhere('variant.is_active = :isActive', { isActive: true })
+      .andWhere('variant.stock_quantity <= :threshold', { threshold })
+      .orderBy('variant.stock_quantity', 'ASC')
+      .addOrderBy('product.product_name', 'ASC')
+      .getRawMany();
+
+    return [...productRows, ...variantRows];
   }
 
   // â”€â”€â”€ WISHLIST â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -1234,7 +1495,111 @@ export class ProductsService {
 
   // â”€â”€â”€ PRIVATE HELPERS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-  private async ensureVariantOptionsExist(dto: UpsertProductVariantDto) {
+  private async ensureTagsExist(tagIds: string[]) {
+    if (tagIds.length === 0) return;
+    const uniqueTagIds = [...new Set(tagIds)];
+    const tags = await this.tagsRepository.find({
+      where: { tagId: In(uniqueTagIds) },
+      select: { tagId: true },
+    });
+    if (tags.length !== uniqueTagIds.length) {
+      throw new NotFoundException('One or more product tags were not found');
+    }
+  }
+
+  private async getInventoryTarget(
+    em: EntityManager,
+    productId: string,
+    variantId?: string | null,
+  ) {
+    const product = await em.findOne(ProductEntity, {
+      where: { productId },
+      lock: { mode: 'pessimistic_write' },
+    });
+    if (!product) {
+      throw new NotFoundException('Product not found');
+    }
+
+    if (!variantId) {
+      return { product, variant: null };
+    }
+
+    const variant = await em.findOne(ProductVariantEntity, {
+      where: { productId, variantId },
+      lock: { mode: 'pessimistic_write' },
+    });
+    if (!variant) {
+      throw new NotFoundException('Variant not found for this product');
+    }
+
+    return { product, variant };
+  }
+
+  private async resolveCreateVariantColorId(dto: CreateProductVariantDto) {
+    if (dto.colorId) return dto.colorId;
+    if (!dto.newColor?.colorName?.trim()) return undefined;
+    const color = await this.createColor({
+      colorName: dto.newColor.colorName,
+      colorCode: dto.newColor.colorCode,
+    });
+    return color.colorId;
+  }
+
+  private async resolveCreateVariantSizeId(dto: CreateProductVariantDto) {
+    if (dto.sizeId) return dto.sizeId;
+    if (!dto.newSize?.sizeName?.trim()) return undefined;
+    const size = await this.createSize({
+      sizeName: dto.newSize.sizeName,
+      sizeCode: dto.newSize.sizeCode,
+    });
+    return size.sizeId;
+  }
+
+  private async prepareCreateVariants(
+    variants: CreateProductVariantDto[],
+    fallbackPrice: string,
+  ) {
+    const prepared: Array<Partial<ProductVariantEntity>> = [];
+    const optionPairs = new Set<string>();
+
+    for (const dto of variants) {
+      const colorId = (await this.resolveCreateVariantColorId(dto)) ?? null;
+      const sizeId = (await this.resolveCreateVariantSizeId(dto)) ?? null;
+      if (!colorId && !sizeId) {
+        throw new BadRequestException('Variant must have a color or size');
+      }
+
+      await this.ensureVariantOptionsExist({ colorId, sizeId });
+      this.ensureVariantPricesAreValid(dto, fallbackPrice);
+
+      const optionKey = `${colorId ?? 'null'}:${sizeId ?? 'null'}`;
+      if (optionPairs.has(optionKey)) {
+        throw new ConflictException(
+          'Variant with this color and size already exists',
+        );
+      }
+      optionPairs.add(optionKey);
+
+      prepared.push({
+        variantId: randomUUID(),
+        colorId,
+        sizeId,
+        sku: dto.sku?.trim() || null,
+        barcode: dto.barcode?.trim() || null,
+        price: dto.price || null,
+        salePrice: dto.salePrice || null,
+        stockQuantity: dto.stockQuantity ?? 0,
+        weightGrams: dto.weightGrams ?? null,
+        isActive: dto.isActive ?? true,
+      });
+    }
+
+    return prepared;
+  }
+
+  private async ensureVariantOptionsExist(
+    dto: { colorId?: string | null; sizeId?: string | null },
+  ) {
     if (dto.colorId) {
       const color = await this.colorsRepository.findOneBy({ colorId: dto.colorId });
       if (!color) throw new NotFoundException('Color not found');

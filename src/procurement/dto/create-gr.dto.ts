@@ -17,6 +17,10 @@ export class CreateGrItemDto {
 
   @IsOptional()
   @IsString()
+  variantId?: string;
+
+  @IsOptional()
+  @IsString()
   unit?: string;
 
   @IsOptional()

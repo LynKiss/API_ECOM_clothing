@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuditLogsModule } from '../audit-logs/audit-logs.module';
 import { InventoryTransactionEntity } from '../products/entities/inventory-transaction.entity';
 import { ProductEntity } from '../products/entities/product.entity';
+import { ProductVariantEntity } from '../products/entities/product-variant.entity';
 import { WarehouseEntity } from '../warehouses/entities/warehouse.entity';
 import { WarehouseStockEntity } from '../warehouses/entities/warehouse-stock.entity';
 import { GoodsReceiptItemEntity } from './entities/goods-receipt-item.entity';
@@ -27,6 +28,7 @@ import { ProcurementService } from './procurement.service';
       SupplierReturnItemEntity,
       ProductCostHistoryEntity,
       ProductEntity,
+      ProductVariantEntity,
       InventoryTransactionEntity,
       WarehouseEntity,
       WarehouseStockEntity,

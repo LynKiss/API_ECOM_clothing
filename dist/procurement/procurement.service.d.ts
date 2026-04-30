@@ -3,6 +3,7 @@ import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { SimpleCacheService } from '../common/simple-cache.service';
 import { InventoryTransactionEntity } from '../products/entities/inventory-transaction.entity';
 import { ProductEntity } from '../products/entities/product.entity';
+import { ProductVariantEntity } from '../products/entities/product-variant.entity';
 import { CreateGrDto } from './dto/create-gr.dto';
 import { CreatePoDto } from './dto/create-po.dto';
 import { CreateSrDto } from './dto/create-sr.dto';
@@ -23,12 +24,16 @@ export declare class ProcurementService {
     private readonly srItemRepo;
     private readonly costHistRepo;
     private readonly productRepo;
+    private readonly productVariantRepo;
     private readonly txRepo;
     private readonly dataSource;
     private readonly auditLogs;
     private readonly cache;
-    constructor(poRepo: Repository<PurchaseOrderEntity>, poItemRepo: Repository<PurchaseOrderItemEntity>, grRepo: Repository<GoodsReceiptEntity>, grItemRepo: Repository<GoodsReceiptItemEntity>, srRepo: Repository<SupplierReturnEntity>, srItemRepo: Repository<SupplierReturnItemEntity>, costHistRepo: Repository<ProductCostHistoryEntity>, productRepo: Repository<ProductEntity>, txRepo: Repository<InventoryTransactionEntity>, dataSource: DataSource, auditLogs: AuditLogsService, cache: SimpleCacheService);
+    constructor(poRepo: Repository<PurchaseOrderEntity>, poItemRepo: Repository<PurchaseOrderItemEntity>, grRepo: Repository<GoodsReceiptEntity>, grItemRepo: Repository<GoodsReceiptItemEntity>, srRepo: Repository<SupplierReturnEntity>, srItemRepo: Repository<SupplierReturnItemEntity>, costHistRepo: Repository<ProductCostHistoryEntity>, productRepo: Repository<ProductEntity>, productVariantRepo: Repository<ProductVariantEntity>, txRepo: Repository<InventoryTransactionEntity>, dataSource: DataSource, auditLogs: AuditLogsService, cache: SimpleCacheService);
     private readonly procurementLogger;
+    private ensureProductAndVariant;
+    private findVariantForUpdate;
+    private syncDefaultWarehouseStock;
     private autoFulfillBackorders;
     private tryFulfillOneBackorder;
     findAllPos(query: QueryProcurementDto): Promise<{
@@ -99,6 +104,7 @@ export declare class ProcurementService {
     getCostHistory(productId: string): Promise<ProductCostHistoryEntity[]>;
     previewGrCost(dto: CreateGrDto): {
         productId: string;
+        variantId: string | null;
         qtyReceived: number;
         qtyReturned: number;
         qtyGood: number;

@@ -36,6 +36,7 @@ import { CreditLimitsModule } from './credit-limits/credit-limits.module';
 import { AuditLogsModule } from './audit-logs/audit-logs.module';
 import { AdminSearchModule } from './admin-search/admin-search.module';
 import { BannersModule } from './banners/banners.module';
+import { VirtualTryOnModule } from './virtual-try-on/virtual-try-on.module';
 
 @Module({
   imports: [
@@ -70,6 +71,7 @@ import { BannersModule } from './banners/banners.module';
     AuditLogsModule,
     AdminSearchModule,
     BannersModule,
+    VirtualTryOnModule,
     IntelligenceModule,
     HealthModule,
   ],

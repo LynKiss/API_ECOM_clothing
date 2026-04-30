@@ -15,11 +15,18 @@ let WarehouseStockEntity = class WarehouseStockEntity {
     stockId;
     warehouseId;
     productId;
+    variantId;
     quantity;
+    createdAt;
+    updatedAt;
 };
 exports.WarehouseStockEntity = WarehouseStockEntity;
 __decorate([
-    (0, typeorm_1.PrimaryGeneratedColumn)({ name: 'stock_id', type: 'bigint', unsigned: true }),
+    (0, typeorm_1.PrimaryGeneratedColumn)({
+        name: 'warehouse_stock_id',
+        type: 'bigint',
+        unsigned: true,
+    }),
     __metadata("design:type", String)
 ], WarehouseStockEntity.prototype, "stockId", void 0);
 __decorate([
@@ -31,9 +38,21 @@ __decorate([
     __metadata("design:type", String)
 ], WarehouseStockEntity.prototype, "productId", void 0);
 __decorate([
+    (0, typeorm_1.Column)({ name: 'variant_id', type: 'char', length: 36, nullable: true }),
+    __metadata("design:type", Object)
+], WarehouseStockEntity.prototype, "variantId", void 0);
+__decorate([
     (0, typeorm_1.Column)({ name: 'quantity', type: 'int', default: 0 }),
     __metadata("design:type", Number)
 ], WarehouseStockEntity.prototype, "quantity", void 0);
+__decorate([
+    (0, typeorm_1.CreateDateColumn)({ name: 'created_at', type: 'datetime' }),
+    __metadata("design:type", Date)
+], WarehouseStockEntity.prototype, "createdAt", void 0);
+__decorate([
+    (0, typeorm_1.UpdateDateColumn)({ name: 'updated_at', type: 'datetime' }),
+    __metadata("design:type", Date)
+], WarehouseStockEntity.prototype, "updatedAt", void 0);
 exports.WarehouseStockEntity = WarehouseStockEntity = __decorate([
     (0, typeorm_1.Entity)({ name: 'warehouse_stock' })
 ], WarehouseStockEntity);

@@ -3,6 +3,7 @@ export declare class PurchaseOrderItemEntity {
     itemId: string;
     poId: string;
     productId: string;
+    variantId: string | null;
     unit: string;
     unitPerBase: number;
     qtyOrdered: number;

@@ -1,5 +1,6 @@
 export declare class CreateSrItemDto {
     productId: string;
+    variantId?: string;
     qtyReturned: number;
     unitPrice: number;
     hasRefund?: boolean;

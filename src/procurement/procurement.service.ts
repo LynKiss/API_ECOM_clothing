@@ -15,6 +15,7 @@ import { OrderItemEntity } from '../orders/entities/order-item.entity';
 import { OrderStatusHistoryEntity } from '../orders/entities/order-status-history.entity';
 import { InventoryTransactionEntity, InventoryTransactionType } from '../products/entities/inventory-transaction.entity';
 import { ProductEntity } from '../products/entities/product.entity';
+import { ProductVariantEntity } from '../products/entities/product-variant.entity';
 import { WarehouseEntity } from '../warehouses/entities/warehouse.entity';
 import { WarehouseStockEntity } from '../warehouses/entities/warehouse-stock.entity';
 import { CreateGrDto } from './dto/create-gr.dto';
@@ -112,6 +113,9 @@ export class ProcurementService {
     @InjectRepository(ProductEntity)
     private readonly productRepo: Repository<ProductEntity>,
 
+    @InjectRepository(ProductVariantEntity)
+    private readonly productVariantRepo: Repository<ProductVariantEntity>,
+
     @InjectRepository(InventoryTransactionEntity)
     private readonly txRepo: Repository<InventoryTransactionEntity>,
 
@@ -121,6 +125,81 @@ export class ProcurementService {
   ) {}
 
   private readonly procurementLogger = new Logger(ProcurementService.name);
+
+  private async ensureProductAndVariant(productId: string, variantId?: string | null) {
+    const product = await this.productRepo.findOneBy({ productId });
+    if (!product) {
+      throw new NotFoundException(`Không tìm thấy sản phẩm ${productId}`);
+    }
+    if (!variantId) return;
+
+    const variant = await this.productVariantRepo.findOneBy({
+      productId,
+      variantId,
+    });
+    if (!variant) {
+      throw new BadRequestException(
+        `Biến thể ${variantId} không thuộc sản phẩm ${productId}`,
+      );
+    }
+  }
+
+  private async findVariantForUpdate(
+    em: import('typeorm').EntityManager,
+    productId: string,
+    variantId?: string | null,
+  ) {
+    if (!variantId) return null;
+    const variant = await em.findOne(ProductVariantEntity, {
+      where: { productId, variantId },
+      lock: { mode: 'pessimistic_write' },
+    });
+    if (!variant) {
+      throw new BadRequestException(
+        `Biến thể ${variantId} không thuộc sản phẩm ${productId}`,
+      );
+    }
+    return variant;
+  }
+
+  private async syncDefaultWarehouseStock(
+    em: import('typeorm').EntityManager,
+    warehouseId: string,
+    productId: string,
+    qtyDelta: number,
+    variantId?: string | null,
+  ) {
+    if (qtyDelta === 0) return;
+    const stockQuery = em
+      .createQueryBuilder(WarehouseStockEntity, 'stock')
+      .where('stock.warehouse_id = :warehouseId', { warehouseId })
+      .andWhere('stock.product_id = :productId', { productId });
+
+    if (variantId) {
+      stockQuery.andWhere('stock.variant_id = :variantId', { variantId });
+    } else {
+      stockQuery.andWhere('stock.variant_id IS NULL');
+    }
+
+    const stock = await stockQuery.getOne();
+    if (stock) {
+      stock.quantity = Math.max(0, stock.quantity + qtyDelta);
+      await em.save(WarehouseStockEntity, stock);
+      return;
+    }
+
+    if (qtyDelta > 0) {
+      await em.save(
+        WarehouseStockEntity,
+        em.create(WarehouseStockEntity, {
+          warehouseId,
+          productId,
+          variantId: variantId ?? null,
+          quantity: qtyDelta,
+        }),
+      );
+    }
+  }
 
   /**
    * Sau khi confirm GR thành công, tìm các đơn BACKORDERED có sản phẩm vừa nhập.
@@ -216,6 +295,7 @@ export class ProcurementService {
 
         // Pre-check: tất cả items đều có đủ stock
         const productMap = new Map<string, ProductEntity>();
+        const variantMap = new Map<string, ProductVariantEntity>();
         for (const item of items) {
           const product = await em.findOne(ProductEntity, {
             where: { productId: item.productId },
@@ -224,13 +304,28 @@ export class ProcurementService {
           if (!product || item.quantity > product.quantityAvailable) {
             return false; // không đủ → giữ BACKORDERED
           }
+          const variant = await this.findVariantForUpdate(
+            em,
+            item.productId,
+            item.variantId,
+          );
+          if (variant && item.quantity > variant.stockQuantity) {
+            return false;
+          }
           productMap.set(item.productId, product);
+          if (variant) variantMap.set(variant.variantId, variant);
         }
 
         // Đủ stock → trừ + ghi inventory_transaction + chuyển PENDING
         for (const item of items) {
           const product = productMap.get(item.productId)!;
-          const qtyBefore = product.quantityAvailable;
+          const variant = item.variantId ? variantMap.get(item.variantId) : null;
+          const qtyBefore = variant?.stockQuantity ?? product.quantityAvailable;
+
+          if (variant) {
+            variant.stockQuantity -= item.quantity;
+            await em.save(ProductVariantEntity, variant);
+          }
           product.quantityAvailable -= item.quantity;
           product.quantityReserved =
             (product.quantityReserved ?? 0) + item.quantity;
@@ -240,11 +335,12 @@ export class ProcurementService {
             InventoryTransactionEntity,
             em.create(InventoryTransactionEntity, {
               productId: item.productId,
+              variantId: variant?.variantId ?? null,
               performedBy: null,
               transactionType: InventoryTransactionType.EXPORT,
               quantityChange: -item.quantity,
               quantityBefore: qtyBefore,
-              quantityAfter: product.quantityAvailable,
+              quantityAfter: variant?.stockQuantity ?? product.quantityAvailable,
               referenceType: 'ORDER',
               referenceId: order.orderId,
               unitCostAtTime: product.avgCost ?? null,
@@ -304,6 +400,10 @@ export class ProcurementService {
   }
 
   async createPo(dto: CreatePoDto, performer?: { userId: string; username: string; ip?: string }) {
+    for (const item of dto.items) {
+      await this.ensureProductAndVariant(item.productId, item.variantId);
+    }
+
     const po = this.poRepo.create({
       poId: uuidv4(),
       poCode: genCode('PO'),
@@ -324,6 +424,7 @@ export class ProcurementService {
       return this.poItemRepo.create({
         poId: po.poId,
         productId: i.productId,
+        variantId: i.variantId ?? null,
         unit: i.unit ?? 'cái',
         unitPerBase: i.unitPerBase ?? 1,
         qtyOrdered: i.qtyOrdered,
@@ -393,6 +494,10 @@ export class ProcurementService {
   }
 
   async createGr(dto: CreateGrDto, performer?: { userId: string; username: string; ip?: string }) {
+    for (const item of dto.items) {
+      await this.ensureProductAndVariant(item.productId, item.variantId);
+    }
+
     const shippingCost = dto.shippingCost ?? 0;
     const otherCost = dto.otherCost ?? 0;
     const totalExtraCost = shippingCost + otherCost;
@@ -435,6 +540,7 @@ export class ProcurementService {
       return this.grItemRepo.create({
         grId: gr.grId,
         productId: i.productId,
+        variantId: i.variantId ?? null,
         unit: i.unit ?? 'cái',
         unitPerBase: i.unitPerBase ?? 1,
         qtyOrdered: i.qtyOrdered ?? 0,
@@ -492,14 +598,24 @@ export class ProcurementService {
         if (!product) continue;
 
         // 1. Cập nhật tồn kho
-        const qtyBefore = product.quantityAvailable;
+        const productQtyBefore = product.quantityAvailable;
+        const variant = await this.findVariantForUpdate(
+          em,
+          item.productId,
+          item.variantId,
+        );
+        const qtyBefore = variant?.stockQuantity ?? productQtyBefore;
         product.quantityAvailable += qtyGood;
-        const qtyAfter = product.quantityAvailable;
+        if (variant) {
+          variant.stockQuantity += qtyGood;
+          await em.save(ProductVariantEntity, variant);
+        }
+        const qtyAfter = variant?.stockQuantity ?? product.quantityAvailable;
 
         // 2. Cập nhật giá vốn — Moving Average Cost
         //    avgCost mới = (qtyHienTai × avgCostHienTai + qtyNhap × giaNhap) / tongQty
         //    Giúp báo cáo lãi đúng khi sản phẩm có nhiều lần nhập với giá khác nhau.
-        const currentQty = qtyBefore;
+        const currentQty = productQtyBefore;
         const currentAvg = Number(product.avgCost ?? 0);
         const incomingCost = Number(item.landedCost);
         const incomingQty = qtyGood;
@@ -529,6 +645,7 @@ export class ProcurementService {
         // 4. Inventory transaction
         const tx = em.create(InventoryTransactionEntity, {
           productId: item.productId,
+          variantId: variant?.variantId ?? null,
           performedBy: performer?.userId ?? null,
           transactionType: InventoryTransactionType.IMPORT,
           quantityChange: qtyGood,
@@ -544,32 +661,34 @@ export class ProcurementService {
 
         // 5. Cập nhật warehouse_stock cho kho mặc định
         if (defaultWarehouse) {
-          const stock = await em.findOne(WarehouseStockEntity, {
-            where: { warehouseId: defaultWarehouse.warehouseId, productId: item.productId },
-          });
-          if (stock) {
-            stock.quantity += qtyGood;
-            await em.save(WarehouseStockEntity, stock);
-          } else {
-            await em.save(WarehouseStockEntity, em.create(WarehouseStockEntity, {
-              warehouseId: defaultWarehouse.warehouseId,
-              productId: item.productId,
-              quantity: qtyGood,
-            }));
-          }
+          await this.syncDefaultWarehouseStock(
+            em,
+            defaultWarehouse.warehouseId,
+            item.productId,
+            qtyGood,
+            variant?.variantId ?? null,
+          );
         }
 
         // 6. Cập nhật qty_received trên PO item (nếu có)
         if (gr.poId) {
-          await em
+          const updateQb = em
             .createQueryBuilder()
             .update(PurchaseOrderItemEntity)
             .set({ qtyReceived: () => `qty_received + ${qtyGood}` })
             .where('po_id = :poId AND product_id = :productId', {
               poId: gr.poId,
               productId: item.productId,
-            })
-            .execute();
+            });
+
+          if (variant) {
+            updateQb.andWhere('variant_id = :variantId', {
+              variantId: variant.variantId,
+            });
+          } else {
+            updateQb.andWhere('variant_id IS NULL');
+          }
+          await updateQb.execute();
         }
       }
 
@@ -651,6 +770,10 @@ export class ProcurementService {
   }
 
   async createSr(dto: CreateSrDto, performer?: { userId: string; username: string; ip?: string }) {
+    for (const item of dto.items) {
+      await this.ensureProductAndVariant(item.productId, item.variantId);
+    }
+
     const totalRefund = dto.items.reduce(
       (sum, i) => sum + (i.hasRefund !== false ? (i.refundAmount ?? i.qtyReturned * i.unitPrice) : 0),
       0,
@@ -672,6 +795,7 @@ export class ProcurementService {
       this.srItemRepo.create({
         srId: sr.srId,
         productId: i.productId,
+        variantId: i.variantId ?? null,
         qtyReturned: i.qtyReturned,
         unitPrice: String(i.unitPrice),
         hasRefund: i.hasRefund !== false,
@@ -712,13 +836,29 @@ export class ProcurementService {
         });
         if (!product) continue;
 
-        const qtyBefore = product.quantityAvailable;
-        product.quantityAvailable = Math.max(0, product.quantityAvailable - item.qtyReturned);
-        const qtyAfter = product.quantityAvailable;
+        const variant = await this.findVariantForUpdate(
+          em,
+          item.productId,
+          item.variantId,
+        );
+        const qtyBefore = variant?.stockQuantity ?? product.quantityAvailable;
+        if (item.qtyReturned > qtyBefore || item.qtyReturned > product.quantityAvailable) {
+          throw new BadRequestException(
+            `Số lượng trả NCC vượt tồn khả dụng của sản phẩm ${item.productId}`,
+          );
+        }
+
+        if (variant) {
+          variant.stockQuantity -= item.qtyReturned;
+          await em.save(ProductVariantEntity, variant);
+        }
+        product.quantityAvailable -= item.qtyReturned;
+        const qtyAfter = variant?.stockQuantity ?? product.quantityAvailable;
         await em.save(ProductEntity, product);
 
         const tx = em.create(InventoryTransactionEntity, {
           productId: item.productId,
+          variantId: variant?.variantId ?? null,
           performedBy: performer?.userId ?? null,
           transactionType: InventoryTransactionType.RETURN_OUT,
           quantityChange: -item.qtyReturned,
@@ -733,13 +873,13 @@ export class ProcurementService {
 
         // Trừ warehouse_stock kho mặc định
         if (defaultWarehouse) {
-          const stock = await em.findOne(WarehouseStockEntity, {
-            where: { warehouseId: defaultWarehouse.warehouseId, productId: item.productId },
-          });
-          if (stock) {
-            stock.quantity = Math.max(0, stock.quantity - item.qtyReturned);
-            await em.save(WarehouseStockEntity, stock);
-          }
+          await this.syncDefaultWarehouseStock(
+            em,
+            defaultWarehouse.warehouseId,
+            item.productId,
+            -item.qtyReturned,
+            variant?.variantId ?? null,
+          );
         }
       }
 
@@ -794,6 +934,7 @@ export class ProcurementService {
 
       return {
         productId: i.productId,
+        variantId: i.variantId ?? null,
         qtyReceived: i.qtyReceived,
         qtyReturned: i.qtyReturned ?? 0,
         qtyGood,

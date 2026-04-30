@@ -5,6 +5,7 @@ export declare enum InventoryAdjustmentMode {
 }
 export declare class AdjustInventoryDto {
     productId: string;
+    variantId?: string;
     mode: InventoryAdjustmentMode;
     quantity: number;
     note?: string;

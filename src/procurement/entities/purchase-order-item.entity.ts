@@ -12,6 +12,9 @@ export class PurchaseOrderItemEntity {
   @Column({ name: 'product_id', type: 'char', length: 36 })
   productId!: string;
 
+  @Column({ name: 'variant_id', type: 'char', length: 36, nullable: true })
+  variantId!: string | null;
+
   @Column({ name: 'unit', type: 'varchar', length: 50, default: 'cái' })
   unit!: string;
 

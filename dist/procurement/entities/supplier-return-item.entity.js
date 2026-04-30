@@ -16,6 +16,7 @@ let SupplierReturnItemEntity = class SupplierReturnItemEntity {
     itemId;
     srId;
     productId;
+    variantId;
     qtyReturned;
     unitPrice;
     hasRefund;
@@ -36,6 +37,10 @@ __decorate([
     (0, typeorm_1.Column)({ name: 'product_id', type: 'char', length: 36 }),
     __metadata("design:type", String)
 ], SupplierReturnItemEntity.prototype, "productId", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ name: 'variant_id', type: 'char', length: 36, nullable: true }),
+    __metadata("design:type", Object)
+], SupplierReturnItemEntity.prototype, "variantId", void 0);
 __decorate([
     (0, typeorm_1.Column)({ name: 'qty_returned', type: 'int', default: 0 }),
     __metadata("design:type", Number)

@@ -27,6 +27,7 @@ const order_item_entity_1 = require("../orders/entities/order-item.entity");
 const order_status_history_entity_1 = require("../orders/entities/order-status-history.entity");
 const inventory_transaction_entity_1 = require("../products/entities/inventory-transaction.entity");
 const product_entity_1 = require("../products/entities/product.entity");
+const product_variant_entity_1 = require("../products/entities/product-variant.entity");
 const warehouse_entity_1 = require("../warehouses/entities/warehouse.entity");
 const warehouse_stock_entity_1 = require("../warehouses/entities/warehouse-stock.entity");
 const goods_receipt_item_entity_1 = require("./entities/goods-receipt-item.entity");
@@ -67,11 +68,12 @@ let ProcurementService = ProcurementService_1 = class ProcurementService {
     srItemRepo;
     costHistRepo;
     productRepo;
+    productVariantRepo;
     txRepo;
     dataSource;
     auditLogs;
     cache;
-    constructor(poRepo, poItemRepo, grRepo, grItemRepo, srRepo, srItemRepo, costHistRepo, productRepo, txRepo, dataSource, auditLogs, cache) {
+    constructor(poRepo, poItemRepo, grRepo, grItemRepo, srRepo, srItemRepo, costHistRepo, productRepo, productVariantRepo, txRepo, dataSource, auditLogs, cache) {
         this.poRepo = poRepo;
         this.poItemRepo = poItemRepo;
         this.grRepo = grRepo;
@@ -80,12 +82,68 @@ let ProcurementService = ProcurementService_1 = class ProcurementService {
         this.srItemRepo = srItemRepo;
         this.costHistRepo = costHistRepo;
         this.productRepo = productRepo;
+        this.productVariantRepo = productVariantRepo;
         this.txRepo = txRepo;
         this.dataSource = dataSource;
         this.auditLogs = auditLogs;
         this.cache = cache;
     }
     procurementLogger = new common_2.Logger(ProcurementService_1.name);
+    async ensureProductAndVariant(productId, variantId) {
+        const product = await this.productRepo.findOneBy({ productId });
+        if (!product) {
+            throw new common_1.NotFoundException(`Không tìm thấy sản phẩm ${productId}`);
+        }
+        if (!variantId)
+            return;
+        const variant = await this.productVariantRepo.findOneBy({
+            productId,
+            variantId,
+        });
+        if (!variant) {
+            throw new common_1.BadRequestException(`Biến thể ${variantId} không thuộc sản phẩm ${productId}`);
+        }
+    }
+    async findVariantForUpdate(em, productId, variantId) {
+        if (!variantId)
+            return null;
+        const variant = await em.findOne(product_variant_entity_1.ProductVariantEntity, {
+            where: { productId, variantId },
+            lock: { mode: 'pessimistic_write' },
+        });
+        if (!variant) {
+            throw new common_1.BadRequestException(`Biến thể ${variantId} không thuộc sản phẩm ${productId}`);
+        }
+        return variant;
+    }
+    async syncDefaultWarehouseStock(em, warehouseId, productId, qtyDelta, variantId) {
+        if (qtyDelta === 0)
+            return;
+        const stockQuery = em
+            .createQueryBuilder(warehouse_stock_entity_1.WarehouseStockEntity, 'stock')
+            .where('stock.warehouse_id = :warehouseId', { warehouseId })
+            .andWhere('stock.product_id = :productId', { productId });
+        if (variantId) {
+            stockQuery.andWhere('stock.variant_id = :variantId', { variantId });
+        }
+        else {
+            stockQuery.andWhere('stock.variant_id IS NULL');
+        }
+        const stock = await stockQuery.getOne();
+        if (stock) {
+            stock.quantity = Math.max(0, stock.quantity + qtyDelta);
+            await em.save(warehouse_stock_entity_1.WarehouseStockEntity, stock);
+            return;
+        }
+        if (qtyDelta > 0) {
+            await em.save(warehouse_stock_entity_1.WarehouseStockEntity, em.create(warehouse_stock_entity_1.WarehouseStockEntity, {
+                warehouseId,
+                productId,
+                variantId: variantId ?? null,
+                quantity: qtyDelta,
+            }));
+        }
+    }
     async autoFulfillBackorders(productIds) {
         if (!productIds.length)
             return;
@@ -146,6 +204,7 @@ let ProcurementService = ProcurementService_1 = class ProcurementService {
                 where: { orderId: order.orderId },
             });
             const productMap = new Map();
+            const variantMap = new Map();
             for (const item of items) {
                 const product = await em.findOne(product_entity_1.ProductEntity, {
                     where: { productId: item.productId },
@@ -154,22 +213,34 @@ let ProcurementService = ProcurementService_1 = class ProcurementService {
                 if (!product || item.quantity > product.quantityAvailable) {
                     return false;
                 }
+                const variant = await this.findVariantForUpdate(em, item.productId, item.variantId);
+                if (variant && item.quantity > variant.stockQuantity) {
+                    return false;
+                }
                 productMap.set(item.productId, product);
+                if (variant)
+                    variantMap.set(variant.variantId, variant);
             }
             for (const item of items) {
                 const product = productMap.get(item.productId);
-                const qtyBefore = product.quantityAvailable;
+                const variant = item.variantId ? variantMap.get(item.variantId) : null;
+                const qtyBefore = variant?.stockQuantity ?? product.quantityAvailable;
+                if (variant) {
+                    variant.stockQuantity -= item.quantity;
+                    await em.save(product_variant_entity_1.ProductVariantEntity, variant);
+                }
                 product.quantityAvailable -= item.quantity;
                 product.quantityReserved =
                     (product.quantityReserved ?? 0) + item.quantity;
                 await em.save(product_entity_1.ProductEntity, product);
                 await em.save(inventory_transaction_entity_1.InventoryTransactionEntity, em.create(inventory_transaction_entity_1.InventoryTransactionEntity, {
                     productId: item.productId,
+                    variantId: variant?.variantId ?? null,
                     performedBy: null,
                     transactionType: inventory_transaction_entity_1.InventoryTransactionType.EXPORT,
                     quantityChange: -item.quantity,
                     quantityBefore: qtyBefore,
-                    quantityAfter: product.quantityAvailable,
+                    quantityAfter: variant?.stockQuantity ?? product.quantityAvailable,
                     referenceType: 'ORDER',
                     referenceId: order.orderId,
                     unitCostAtTime: product.avgCost ?? null,
@@ -219,6 +290,9 @@ let ProcurementService = ProcurementService_1 = class ProcurementService {
         return po;
     }
     async createPo(dto, performer) {
+        for (const item of dto.items) {
+            await this.ensureProductAndVariant(item.productId, item.variantId);
+        }
         const po = this.poRepo.create({
             poId: (0, uuid_1.v4)(),
             poCode: genCode('PO'),
@@ -238,6 +312,7 @@ let ProcurementService = ProcurementService_1 = class ProcurementService {
             return this.poItemRepo.create({
                 poId: po.poId,
                 productId: i.productId,
+                variantId: i.variantId ?? null,
                 unit: i.unit ?? 'cái',
                 unitPerBase: i.unitPerBase ?? 1,
                 qtyOrdered: i.qtyOrdered,
@@ -303,6 +378,9 @@ let ProcurementService = ProcurementService_1 = class ProcurementService {
         return gr;
     }
     async createGr(dto, performer) {
+        for (const item of dto.items) {
+            await this.ensureProductAndVariant(item.productId, item.variantId);
+        }
         const shippingCost = dto.shippingCost ?? 0;
         const otherCost = dto.otherCost ?? 0;
         const totalExtraCost = shippingCost + otherCost;
@@ -334,6 +412,7 @@ let ProcurementService = ProcurementService_1 = class ProcurementService {
             return this.grItemRepo.create({
                 grId: gr.grId,
                 productId: i.productId,
+                variantId: i.variantId ?? null,
                 unit: i.unit ?? 'cái',
                 unitPerBase: i.unitPerBase ?? 1,
                 qtyOrdered: i.qtyOrdered ?? 0,
@@ -376,10 +455,16 @@ let ProcurementService = ProcurementService_1 = class ProcurementService {
                 });
                 if (!product)
                     continue;
-                const qtyBefore = product.quantityAvailable;
+                const productQtyBefore = product.quantityAvailable;
+                const variant = await this.findVariantForUpdate(em, item.productId, item.variantId);
+                const qtyBefore = variant?.stockQuantity ?? productQtyBefore;
                 product.quantityAvailable += qtyGood;
-                const qtyAfter = product.quantityAvailable;
-                const currentQty = qtyBefore;
+                if (variant) {
+                    variant.stockQuantity += qtyGood;
+                    await em.save(product_variant_entity_1.ProductVariantEntity, variant);
+                }
+                const qtyAfter = variant?.stockQuantity ?? product.quantityAvailable;
+                const currentQty = productQtyBefore;
                 const currentAvg = Number(product.avgCost ?? 0);
                 const incomingCost = Number(item.landedCost);
                 const incomingQty = qtyGood;
@@ -401,6 +486,7 @@ let ProcurementService = ProcurementService_1 = class ProcurementService {
                 await em.save(product_cost_history_entity_1.ProductCostHistoryEntity, hist);
                 const tx = em.create(inventory_transaction_entity_1.InventoryTransactionEntity, {
                     productId: item.productId,
+                    variantId: variant?.variantId ?? null,
                     performedBy: performer?.userId ?? null,
                     transactionType: inventory_transaction_entity_1.InventoryTransactionType.IMPORT,
                     quantityChange: qtyGood,
@@ -414,31 +500,26 @@ let ProcurementService = ProcurementService_1 = class ProcurementService {
                 });
                 await em.save(inventory_transaction_entity_1.InventoryTransactionEntity, tx);
                 if (defaultWarehouse) {
-                    const stock = await em.findOne(warehouse_stock_entity_1.WarehouseStockEntity, {
-                        where: { warehouseId: defaultWarehouse.warehouseId, productId: item.productId },
-                    });
-                    if (stock) {
-                        stock.quantity += qtyGood;
-                        await em.save(warehouse_stock_entity_1.WarehouseStockEntity, stock);
-                    }
-                    else {
-                        await em.save(warehouse_stock_entity_1.WarehouseStockEntity, em.create(warehouse_stock_entity_1.WarehouseStockEntity, {
-                            warehouseId: defaultWarehouse.warehouseId,
-                            productId: item.productId,
-                            quantity: qtyGood,
-                        }));
-                    }
+                    await this.syncDefaultWarehouseStock(em, defaultWarehouse.warehouseId, item.productId, qtyGood, variant?.variantId ?? null);
                 }
                 if (gr.poId) {
-                    await em
+                    const updateQb = em
                         .createQueryBuilder()
                         .update(purchase_order_item_entity_1.PurchaseOrderItemEntity)
                         .set({ qtyReceived: () => `qty_received + ${qtyGood}` })
                         .where('po_id = :poId AND product_id = :productId', {
                         poId: gr.poId,
                         productId: item.productId,
-                    })
-                        .execute();
+                    });
+                    if (variant) {
+                        updateQb.andWhere('variant_id = :variantId', {
+                            variantId: variant.variantId,
+                        });
+                    }
+                    else {
+                        updateQb.andWhere('variant_id IS NULL');
+                    }
+                    await updateQb.execute();
                 }
             }
             await em.update(goods_receipt_entity_1.GoodsReceiptEntity, { grId: id }, { status: goods_receipt_entity_1.GoodsReceiptStatus.CONFIRMED });
@@ -505,6 +586,9 @@ let ProcurementService = ProcurementService_1 = class ProcurementService {
         return sr;
     }
     async createSr(dto, performer) {
+        for (const item of dto.items) {
+            await this.ensureProductAndVariant(item.productId, item.variantId);
+        }
         const totalRefund = dto.items.reduce((sum, i) => sum + (i.hasRefund !== false ? (i.refundAmount ?? i.qtyReturned * i.unitPrice) : 0), 0);
         const sr = this.srRepo.create({
             srId: (0, uuid_1.v4)(),
@@ -520,6 +604,7 @@ let ProcurementService = ProcurementService_1 = class ProcurementService {
         const items = dto.items.map((i) => this.srItemRepo.create({
             srId: sr.srId,
             productId: i.productId,
+            variantId: i.variantId ?? null,
             qtyReturned: i.qtyReturned,
             unitPrice: String(i.unitPrice),
             hasRefund: i.hasRefund !== false,
@@ -554,12 +639,21 @@ let ProcurementService = ProcurementService_1 = class ProcurementService {
                 });
                 if (!product)
                     continue;
-                const qtyBefore = product.quantityAvailable;
-                product.quantityAvailable = Math.max(0, product.quantityAvailable - item.qtyReturned);
-                const qtyAfter = product.quantityAvailable;
+                const variant = await this.findVariantForUpdate(em, item.productId, item.variantId);
+                const qtyBefore = variant?.stockQuantity ?? product.quantityAvailable;
+                if (item.qtyReturned > qtyBefore || item.qtyReturned > product.quantityAvailable) {
+                    throw new common_1.BadRequestException(`Số lượng trả NCC vượt tồn khả dụng của sản phẩm ${item.productId}`);
+                }
+                if (variant) {
+                    variant.stockQuantity -= item.qtyReturned;
+                    await em.save(product_variant_entity_1.ProductVariantEntity, variant);
+                }
+                product.quantityAvailable -= item.qtyReturned;
+                const qtyAfter = variant?.stockQuantity ?? product.quantityAvailable;
                 await em.save(product_entity_1.ProductEntity, product);
                 const tx = em.create(inventory_transaction_entity_1.InventoryTransactionEntity, {
                     productId: item.productId,
+                    variantId: variant?.variantId ?? null,
                     performedBy: performer?.userId ?? null,
                     transactionType: inventory_transaction_entity_1.InventoryTransactionType.RETURN_OUT,
                     quantityChange: -item.qtyReturned,
@@ -572,13 +666,7 @@ let ProcurementService = ProcurementService_1 = class ProcurementService {
                 });
                 await em.save(inventory_transaction_entity_1.InventoryTransactionEntity, tx);
                 if (defaultWarehouse) {
-                    const stock = await em.findOne(warehouse_stock_entity_1.WarehouseStockEntity, {
-                        where: { warehouseId: defaultWarehouse.warehouseId, productId: item.productId },
-                    });
-                    if (stock) {
-                        stock.quantity = Math.max(0, stock.quantity - item.qtyReturned);
-                        await em.save(warehouse_stock_entity_1.WarehouseStockEntity, stock);
-                    }
+                    await this.syncDefaultWarehouseStock(em, defaultWarehouse.warehouseId, item.productId, -item.qtyReturned, variant?.variantId ?? null);
                 }
             }
             await em.update(supplier_return_entity_1.SupplierReturnEntity, { srId: id }, { status: supplier_return_entity_1.SupplierReturnStatus.CONFIRMED });
@@ -619,6 +707,7 @@ let ProcurementService = ProcurementService_1 = class ProcurementService {
             });
             return {
                 productId: i.productId,
+                variantId: i.variantId ?? null,
                 qtyReceived: i.qtyReceived,
                 qtyReturned: i.qtyReturned ?? 0,
                 qtyGood,
@@ -641,8 +730,10 @@ exports.ProcurementService = ProcurementService = ProcurementService_1 = __decor
     __param(5, (0, typeorm_1.InjectRepository)(supplier_return_item_entity_1.SupplierReturnItemEntity)),
     __param(6, (0, typeorm_1.InjectRepository)(product_cost_history_entity_1.ProductCostHistoryEntity)),
     __param(7, (0, typeorm_1.InjectRepository)(product_entity_1.ProductEntity)),
-    __param(8, (0, typeorm_1.InjectRepository)(inventory_transaction_entity_1.InventoryTransactionEntity)),
+    __param(8, (0, typeorm_1.InjectRepository)(product_variant_entity_1.ProductVariantEntity)),
+    __param(9, (0, typeorm_1.InjectRepository)(inventory_transaction_entity_1.InventoryTransactionEntity)),
     __metadata("design:paramtypes", [typeorm_2.Repository,
+        typeorm_2.Repository,
         typeorm_2.Repository,
         typeorm_2.Repository,
         typeorm_2.Repository,

@@ -12,6 +12,7 @@ const typeorm_1 = require("@nestjs/typeorm");
 const audit_logs_module_1 = require("../audit-logs/audit-logs.module");
 const inventory_transaction_entity_1 = require("../products/entities/inventory-transaction.entity");
 const product_entity_1 = require("../products/entities/product.entity");
+const product_variant_entity_1 = require("../products/entities/product-variant.entity");
 const warehouse_entity_1 = require("../warehouses/entities/warehouse.entity");
 const warehouse_stock_entity_1 = require("../warehouses/entities/warehouse-stock.entity");
 const goods_receipt_item_entity_1 = require("./entities/goods-receipt-item.entity");
@@ -39,6 +40,7 @@ exports.ProcurementModule = ProcurementModule = __decorate([
                 supplier_return_item_entity_1.SupplierReturnItemEntity,
                 product_cost_history_entity_1.ProductCostHistoryEntity,
                 product_entity_1.ProductEntity,
+                product_variant_entity_1.ProductVariantEntity,
                 inventory_transaction_entity_1.InventoryTransactionEntity,
                 warehouse_entity_1.WarehouseEntity,
                 warehouse_stock_entity_1.WarehouseStockEntity,

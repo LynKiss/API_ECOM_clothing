@@ -15,6 +15,10 @@ export class CreateSrItemDto {
   @IsString()
   productId!: string;
 
+  @IsOptional()
+  @IsString()
+  variantId?: string;
+
   @IsInt()
   @Min(1)
   qtyReturned!: number;

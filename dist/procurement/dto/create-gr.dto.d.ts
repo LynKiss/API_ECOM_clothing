@@ -1,5 +1,6 @@
 export declare class CreateGrItemDto {
     productId: string;
+    variantId?: string;
     unit?: string;
     unitPerBase?: number;
     qtyOrdered?: number;

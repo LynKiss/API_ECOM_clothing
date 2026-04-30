@@ -1,5 +1,6 @@
 export declare class CreatePoItemDto {
     productId: string;
+    variantId?: string;
     unit?: string;
     unitPerBase?: number;
     qtyOrdered: number;

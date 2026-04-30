@@ -5,6 +5,11 @@ export class RecordDamageDto {
   @MaxLength(36)
   productId: string;
 
+  @IsOptional()
+  @IsString()
+  @MaxLength(36)
+  variantId?: string;
+
   @IsInt()
   @Min(1)
   quantity: number;
@@ -19,6 +24,11 @@ export class RecordReturnDto {
   @IsString()
   @MaxLength(36)
   productId: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(36)
+  variantId?: string;
 
   @IsInt()
   @Min(1)

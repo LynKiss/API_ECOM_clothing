@@ -447,24 +447,32 @@ export declare class ProductsService {
     }>;
     importInventory(performedBy: string, importInventoryDto: ImportInventoryDto): Promise<{
         productId: string;
+        variantId: string | null;
         quantityAvailable: number;
+        targetQuantity: number;
         transactionId: string;
     }>;
     adjustInventory(performedBy: string, adjustInventoryDto: AdjustInventoryDto): Promise<{
         productId: string;
+        variantId: string | null;
         previousQuantity: number;
         currentQuantity: number;
+        quantityAvailable: number;
         quantityChange: number;
         transactionId: string;
     }>;
     recordDamage(performedBy: string, dto: RecordDamageDto): Promise<{
         productId: string;
+        variantId: string | null;
         quantityAvailable: number;
+        targetQuantity: number;
         transactionId: string;
     }>;
     recordReturn(performedBy: string, dto: RecordReturnDto): Promise<{
         productId: string;
+        variantId: string | null;
         quantityAvailable: number;
+        targetQuantity: number;
         transactionId: string;
     }>;
     findInventoryTransactions(query: QueryInventoryTransactionsDto): Promise<{
@@ -477,13 +485,7 @@ export declare class ProductsService {
         items: any[];
     }>;
     getInventorySummary(): Promise<any[]>;
-    getLowStockProducts(threshold?: number): Promise<{
-        productId: string;
-        productName: string;
-        quantityAvailable: number;
-        unit: string | null;
-        barcode: string | null;
-    }[]>;
+    getLowStockProducts(threshold?: number): Promise<any[]>;
     findWishlist(userId: string): Promise<{
         productId: string;
         createdAt: Date;
@@ -538,6 +540,11 @@ export declare class ProductsService {
     removeWishlistItem(userId: string, productId: string): Promise<{
         success: boolean;
     }>;
+    private ensureTagsExist;
+    private getInventoryTarget;
+    private resolveCreateVariantColorId;
+    private resolveCreateVariantSizeId;
+    private prepareCreateVariants;
     private ensureVariantOptionsExist;
     private ensureVariantPricesAreValid;
     private ensureUniqueVariantOptionPair;

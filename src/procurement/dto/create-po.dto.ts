@@ -16,6 +16,10 @@ export class CreatePoItemDto {
 
   @IsOptional()
   @IsString()
+  variantId?: string;
+
+  @IsOptional()
+  @IsString()
   unit?: string;
 
   @IsOptional()

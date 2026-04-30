@@ -12,6 +12,9 @@ export class SupplierReturnItemEntity {
   @Column({ name: 'product_id', type: 'char', length: 36 })
   productId!: string;
 
+  @Column({ name: 'variant_id', type: 'char', length: 36, nullable: true })
+  variantId!: string | null;
+
   @Column({ name: 'qty_returned', type: 'int', default: 0 })
   qtyReturned!: number;
 

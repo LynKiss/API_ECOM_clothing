@@ -9,9 +9,120 @@ var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.CreateProductDto = void 0;
+exports.CreateProductDto = exports.CreateProductVariantDto = void 0;
 const dto_transformers_1 = require("../../common/dto-transformers");
+const class_transformer_1 = require("class-transformer");
 const class_validator_1 = require("class-validator");
+class CreateProductVariantColorDto {
+    colorName;
+    colorCode;
+}
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsNotEmpty)(),
+    (0, class_validator_1.MaxLength)(100),
+    __metadata("design:type", String)
+], CreateProductVariantColorDto.prototype, "colorName", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(30),
+    __metadata("design:type", String)
+], CreateProductVariantColorDto.prototype, "colorCode", void 0);
+class CreateProductVariantSizeDto {
+    sizeName;
+    sizeCode;
+}
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsNotEmpty)(),
+    (0, class_validator_1.MaxLength)(80),
+    __metadata("design:type", String)
+], CreateProductVariantSizeDto.prototype, "sizeName", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(30),
+    __metadata("design:type", String)
+], CreateProductVariantSizeDto.prototype, "sizeCode", void 0);
+class CreateProductVariantDto {
+    colorId;
+    newColor;
+    sizeId;
+    newSize;
+    sku;
+    barcode;
+    price;
+    salePrice;
+    stockQuantity;
+    weightGrams;
+    isActive;
+}
+exports.CreateProductVariantDto = CreateProductVariantDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsNumberString)(),
+    __metadata("design:type", String)
+], CreateProductVariantDto.prototype, "colorId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.ValidateNested)(),
+    (0, class_transformer_1.Type)(() => CreateProductVariantColorDto),
+    __metadata("design:type", CreateProductVariantColorDto)
+], CreateProductVariantDto.prototype, "newColor", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsNumberString)(),
+    __metadata("design:type", String)
+], CreateProductVariantDto.prototype, "sizeId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.ValidateNested)(),
+    (0, class_transformer_1.Type)(() => CreateProductVariantSizeDto),
+    __metadata("design:type", CreateProductVariantSizeDto)
+], CreateProductVariantDto.prototype, "newSize", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(120),
+    __metadata("design:type", String)
+], CreateProductVariantDto.prototype, "sku", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(120),
+    __metadata("design:type", String)
+], CreateProductVariantDto.prototype, "barcode", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsNumberString)(),
+    __metadata("design:type", String)
+], CreateProductVariantDto.prototype, "price", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsNumberString)(),
+    __metadata("design:type", String)
+], CreateProductVariantDto.prototype, "salePrice", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_transformer_1.Type)(() => Number),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(0),
+    __metadata("design:type", Number)
+], CreateProductVariantDto.prototype, "stockQuantity", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_transformer_1.Type)(() => Number),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(0),
+    __metadata("design:type", Number)
+], CreateProductVariantDto.prototype, "weightGrams", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, dto_transformers_1.ToBoolean)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], CreateProductVariantDto.prototype, "isActive", void 0);
 class CreateProductDto {
     productId;
     productName;
@@ -30,6 +141,8 @@ class CreateProductDto {
     barcode;
     boxBarcode;
     isFeatured;
+    tagIds;
+    variants;
 }
 exports.CreateProductDto = CreateProductDto;
 __decorate([
@@ -124,4 +237,18 @@ __decorate([
     (0, class_validator_1.IsBoolean)(),
     __metadata("design:type", Boolean)
 ], CreateProductDto.prototype, "isFeatured", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsArray)(),
+    (0, class_validator_1.ArrayUnique)(),
+    (0, class_validator_1.IsString)({ each: true }),
+    __metadata("design:type", Array)
+], CreateProductDto.prototype, "tagIds", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsArray)(),
+    (0, class_validator_1.ValidateNested)({ each: true }),
+    (0, class_transformer_1.Type)(() => CreateProductVariantDto),
+    __metadata("design:type", Array)
+], CreateProductDto.prototype, "variants", void 0);
 //# sourceMappingURL=create-product.dto.js.map

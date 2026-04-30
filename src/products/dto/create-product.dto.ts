@@ -1,5 +1,8 @@
 import { ToBoolean } from '../../common/dto-transformers';
+import { Type } from 'class-transformer';
 import {
+  ArrayUnique,
+  IsArray,
   IsBoolean,
   IsInt,
   IsNotEmpty,
@@ -9,7 +12,87 @@ import {
   IsUUID,
   MaxLength,
   Min,
+  ValidateNested,
 } from 'class-validator';
+
+class CreateProductVariantColorDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(100)
+  colorName: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(30)
+  colorCode?: string;
+}
+
+class CreateProductVariantSizeDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(80)
+  sizeName: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(30)
+  sizeCode?: string;
+}
+
+export class CreateProductVariantDto {
+  @IsOptional()
+  @IsNumberString()
+  colorId?: string;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => CreateProductVariantColorDto)
+  newColor?: CreateProductVariantColorDto;
+
+  @IsOptional()
+  @IsNumberString()
+  sizeId?: string;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => CreateProductVariantSizeDto)
+  newSize?: CreateProductVariantSizeDto;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  sku?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  barcode?: string;
+
+  @IsOptional()
+  @IsNumberString()
+  price?: string;
+
+  @IsOptional()
+  @IsNumberString()
+  salePrice?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  stockQuantity?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  weightGrams?: number;
+
+  @IsOptional()
+  @ToBoolean()
+  @IsBoolean()
+  isActive?: boolean;
+}
 
 export class CreateProductDto {
   @IsOptional()
@@ -86,4 +169,16 @@ export class CreateProductDto {
   @ToBoolean()
   @IsBoolean()
   isFeatured?: boolean;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayUnique()
+  @IsString({ each: true })
+  tagIds?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateProductVariantDto)
+  variants?: CreateProductVariantDto[];
 }

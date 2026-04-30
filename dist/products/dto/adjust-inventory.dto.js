@@ -19,6 +19,7 @@ var InventoryAdjustmentMode;
 })(InventoryAdjustmentMode || (exports.InventoryAdjustmentMode = InventoryAdjustmentMode = {}));
 class AdjustInventoryDto {
     productId;
+    variantId;
     mode;
     quantity;
     note;
@@ -30,11 +31,18 @@ __decorate([
     __metadata("design:type", String)
 ], AdjustInventoryDto.prototype, "productId", void 0);
 __decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(36),
+    __metadata("design:type", String)
+], AdjustInventoryDto.prototype, "variantId", void 0);
+__decorate([
     (0, class_validator_1.IsEnum)(InventoryAdjustmentMode),
     __metadata("design:type", String)
 ], AdjustInventoryDto.prototype, "mode", void 0);
 __decorate([
     (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(0),
     __metadata("design:type", Number)
 ], AdjustInventoryDto.prototype, "quantity", void 0);
 __decorate([

@@ -45,6 +45,7 @@ const credit_limits_module_1 = require("./credit-limits/credit-limits.module");
 const audit_logs_module_1 = require("./audit-logs/audit-logs.module");
 const admin_search_module_1 = require("./admin-search/admin-search.module");
 const banners_module_1 = require("./banners/banners.module");
+const virtual_try_on_module_1 = require("./virtual-try-on/virtual-try-on.module");
 let AppModule = class AppModule {
 };
 exports.AppModule = AppModule;
@@ -82,6 +83,7 @@ exports.AppModule = AppModule = __decorate([
             audit_logs_module_1.AuditLogsModule,
             admin_search_module_1.AdminSearchModule,
             banners_module_1.BannersModule,
+            virtual_try_on_module_1.VirtualTryOnModule,
             intelligence_module_1.IntelligenceModule,
             health_module_1.HealthModule,
         ],

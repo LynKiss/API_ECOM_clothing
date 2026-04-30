@@ -15,6 +15,7 @@ const class_validator_1 = require("class-validator");
 const inventory_transaction_entity_1 = require("../entities/inventory-transaction.entity");
 class QueryInventoryTransactionsDto {
     productId;
+    variantId;
     transactionType;
     relatedOrderId;
     performedBy;
@@ -29,6 +30,11 @@ __decorate([
     (0, class_validator_1.IsString)(),
     __metadata("design:type", String)
 ], QueryInventoryTransactionsDto.prototype, "productId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], QueryInventoryTransactionsDto.prototype, "variantId", void 0);
 __decorate([
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsEnum)(inventory_transaction_entity_1.InventoryTransactionType),

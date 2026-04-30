@@ -13,6 +13,7 @@ exports.ImportInventoryDto = void 0;
 const class_validator_1 = require("class-validator");
 class ImportInventoryDto {
     productId;
+    variantId;
     quantity;
     note;
 }
@@ -22,6 +23,12 @@ __decorate([
     (0, class_validator_1.MaxLength)(36),
     __metadata("design:type", String)
 ], ImportInventoryDto.prototype, "productId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(36),
+    __metadata("design:type", String)
+], ImportInventoryDto.prototype, "variantId", void 0);
 __decorate([
     (0, class_validator_1.IsInt)(),
     (0, class_validator_1.Min)(1),

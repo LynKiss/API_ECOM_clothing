@@ -13,6 +13,7 @@ exports.RecordReturnDto = exports.RecordDamageDto = void 0;
 const class_validator_1 = require("class-validator");
 class RecordDamageDto {
     productId;
+    variantId;
     quantity;
     note;
 }
@@ -22,6 +23,12 @@ __decorate([
     (0, class_validator_1.MaxLength)(36),
     __metadata("design:type", String)
 ], RecordDamageDto.prototype, "productId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(36),
+    __metadata("design:type", String)
+], RecordDamageDto.prototype, "variantId", void 0);
 __decorate([
     (0, class_validator_1.IsInt)(),
     (0, class_validator_1.Min)(1),
@@ -35,6 +42,7 @@ __decorate([
 ], RecordDamageDto.prototype, "note", void 0);
 class RecordReturnDto {
     productId;
+    variantId;
     quantity;
     relatedOrderId;
     note;
@@ -45,6 +53,12 @@ __decorate([
     (0, class_validator_1.MaxLength)(36),
     __metadata("design:type", String)
 ], RecordReturnDto.prototype, "productId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(36),
+    __metadata("design:type", String)
+], RecordReturnDto.prototype, "variantId", void 0);
 __decorate([
     (0, class_validator_1.IsInt)(),
     (0, class_validator_1.Min)(1),
