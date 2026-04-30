@@ -2,19 +2,26 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   Param,
   Patch,
   Post,
   Query,
 } from '@nestjs/common';
 import {
+  Public,
   RequirePermissions,
   ResponseMessage,
   User,
 } from '../decorator/customize';
 import type { IUser } from '../users/users.interface';
+import { CreateGuestOrderDto } from './dto/create-guest-order.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
+import { PartialDeliverDto } from './dto/partial-deliver.dto';
 import { QueryOrdersDto } from './dto/query-orders.dto';
+import { UpdateOrderTrackingLiveDto } from './dto/update-order-tracking-live.dto';
+import { UpdateOrderTrackingManualDto } from './dto/update-order-tracking-manual.dto';
+import { UpdateOrderTrackingModeDto } from './dto/update-order-tracking-mode.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { OrdersService } from './orders.service';
 
@@ -27,8 +34,39 @@ export class OrdersController {
   createOrder(
     @User() currentUser: IUser,
     @Body() createOrderDto: CreateOrderDto,
+    @Headers('x-idempotency-key') idempotencyKey?: string,
   ) {
-    return this.ordersService.createOrder(currentUser._id, createOrderDto);
+    return this.ordersService.createOrder(
+      currentUser._id,
+      createOrderDto,
+      idempotencyKey?.trim() || undefined,
+    );
+  }
+
+  /**
+   * Guest checkout — KHÔNG cần đăng ký tài khoản.
+   * Khách điền tên + SĐT + địa chỉ trực tiếp.
+   * Cùng pessimistic lock + idempotency.
+   */
+  @Public()
+  @Post('guest')
+  @ResponseMessage('Create guest order')
+  createGuestOrder(
+    @Body() dto: CreateGuestOrderDto,
+    @Headers('x-idempotency-key') idempotencyKey?: string,
+  ) {
+    return this.ordersService.createGuestOrder(dto, idempotencyKey?.trim() || undefined);
+  }
+
+  /** Guest tra cứu đơn hàng theo orderId + phone */
+  @Public()
+  @Get('guest/:orderId')
+  @ResponseMessage('Get guest order')
+  getGuestOrder(
+    @Param('orderId') orderId: string,
+    @Query('phone') phone: string,
+  ) {
+    return this.ordersService.findGuestOrder(orderId, phone);
   }
 
   @Get()
@@ -42,6 +80,12 @@ export class OrdersController {
   @ResponseMessage('Get order detail')
   getOrderDetail(@User() currentUser: IUser, @Param('id') id: string) {
     return this.ordersService.findOrderDetail(currentUser, id);
+  }
+
+  @Get(':id/tracking')
+  @ResponseMessage('Get order tracking detail')
+  getOrderTracking(@User() currentUser: IUser, @Param('id') id: string) {
+    return this.ordersService.findOrderTracking(currentUser, id);
   }
 
   @Patch(':id/cancel')
@@ -62,6 +106,67 @@ export class OrdersController {
       currentUser,
       id,
       updateOrderStatusDto,
+    );
+  }
+
+  @Patch(':id/partial-deliver')
+  @RequirePermissions('manage_orders')
+  @ResponseMessage('Partial deliver order')
+  partialDeliver(
+    @User() currentUser: IUser,
+    @Param('id') id: string,
+    @Body() dto: PartialDeliverDto,
+  ) {
+    return this.ordersService.partialDeliverOrder(
+      currentUser,
+      id,
+      dto.items,
+      dto.note,
+    );
+  }
+
+  @Patch(':id/tracking/mode')
+  @RequirePermissions('manage_orders')
+  @ResponseMessage('Update order tracking mode')
+  updateOrderTrackingMode(
+    @User() currentUser: IUser,
+    @Param('id') id: string,
+    @Body() updateOrderTrackingModeDto: UpdateOrderTrackingModeDto,
+  ) {
+    return this.ordersService.updateOrderTrackingMode(
+      currentUser,
+      id,
+      updateOrderTrackingModeDto,
+    );
+  }
+
+  @Patch(':id/tracking/manual')
+  @RequirePermissions('manage_orders')
+  @ResponseMessage('Update manual order tracking point')
+  updateManualOrderTracking(
+    @User() currentUser: IUser,
+    @Param('id') id: string,
+    @Body() updateOrderTrackingManualDto: UpdateOrderTrackingManualDto,
+  ) {
+    return this.ordersService.updateManualOrderTracking(
+      currentUser,
+      id,
+      updateOrderTrackingManualDto,
+    );
+  }
+
+  @Patch(':id/tracking/live')
+  @RequirePermissions('manage_orders')
+  @ResponseMessage('Update live order tracking point')
+  updateLiveOrderTracking(
+    @User() currentUser: IUser,
+    @Param('id') id: string,
+    @Body() updateOrderTrackingLiveDto: UpdateOrderTrackingLiveDto,
+  ) {
+    return this.ordersService.updateLiveOrderTracking(
+      currentUser,
+      id,
+      updateOrderTrackingLiveDto,
     );
   }
 }

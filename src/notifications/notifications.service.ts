@@ -1,8 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import * as nodemailer from 'nodemailer';
-import { QueryFailedError, Repository } from 'typeorm';
+import { IsNull, QueryFailedError, Repository } from 'typeorm';
+import { ProductEntity } from '../products/entities/product.entity';
+import { SettingsService } from '../settings/settings.service';
 import { UserEntity } from '../users/entities/user.entity';
 import {
   NotificationChannel,
@@ -28,7 +29,9 @@ export class NotificationsService {
     private readonly notificationsRepository: Repository<NotificationEntity>,
     @InjectRepository(UserEntity)
     private readonly usersRepository: Repository<UserEntity>,
-    private readonly configService: ConfigService,
+    @InjectRepository(ProductEntity)
+    private readonly productsRepository: Repository<ProductEntity>,
+    private readonly settingsService: SettingsService,
   ) {}
 
   async createNotification(input: CreateNotificationInput) {
@@ -56,6 +59,82 @@ export class NotificationsService {
       }
 
       throw error;
+    }
+  }
+
+  async getAdminSummary() {
+    try {
+      const items = await this.notificationsRepository.find({
+        where: [
+          { channel: NotificationChannel.SYSTEM, userId: IsNull() },
+        ],
+        order: { createdAt: 'DESC' },
+        take: 20,
+      });
+      const dbNotifications = items.map((item) => this.toResponse(item));
+      const lowStockAlerts = await this.getLowStockAlerts();
+      const merged = [...dbNotifications, ...lowStockAlerts];
+      merged.sort((a, b) => {
+        const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return bTime - aTime;
+      });
+      return merged.slice(0, 30);
+    } catch (error) {
+      if (this.isMissingNotificationsTable(error)) {
+        return [];
+      }
+      throw error;
+    }
+  }
+
+  async getLowStockAlerts(): Promise<
+    {
+      id: string | null;
+      userId: string | null;
+      email: string | null;
+      channel: NotificationChannel;
+      status: NotificationStatus;
+      title: string;
+      message: string;
+      metadata: Record<string, unknown> | null;
+      deliveryError: string | null;
+      sentAt: Date | null;
+      createdAt: Date | null;
+      updatedAt: Date | null;
+    }[]
+  > {
+    try {
+      const lowStockProducts = await this.productsRepository.find({
+        where: { isShow: true },
+        order: { quantityAvailable: 'ASC' },
+        take: 10,
+      });
+
+      const filtered = lowStockProducts.filter(
+        (p) => p.quantityAvailable <= 10,
+      );
+
+      return filtered.map((p) => ({
+        id: `low-stock-${p.productId}`,
+        userId: null,
+        email: null,
+        channel: NotificationChannel.SYSTEM,
+        status: NotificationStatus.SENT,
+        title: 'Sản phẩm sắp hết hàng',
+        message: `${p.productName} chỉ còn ${p.quantityAvailable} đơn vị`,
+        metadata: {
+          productId: p.productId,
+          type: 'low_stock',
+          quantity: p.quantityAvailable,
+        },
+        deliveryError: null,
+        sentAt: new Date(),
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }));
+    } catch {
+      return [];
     }
   }
 
@@ -102,6 +181,27 @@ export class NotificationsService {
         metadata: { orderId, type: 'order_created' },
       }),
     ]);
+  }
+
+  async sendAdminOrderCreatedNotification(input: {
+    orderId: string;
+    fullName: string;
+    phone: string;
+    totalPayment: string;
+  }) {
+    return this.createNotification({
+      userId: null,
+      channel: NotificationChannel.SYSTEM,
+      title: 'Co don hang moi',
+      message: `Don ${input.orderId} tu ${input.fullName || input.phone} co tong tien ${input.totalPayment}.`,
+      metadata: {
+        orderId: input.orderId,
+        fullName: input.fullName,
+        phone: input.phone,
+        totalPayment: input.totalPayment,
+        type: 'admin_order_created',
+      },
+    });
   }
 
   async sendOrderStatusNotification(
@@ -172,12 +272,8 @@ export class NotificationsService {
       );
     }
 
-    const host = this.configService.get<string>('SMTP_HOST');
-    const port = Number(this.configService.get<string>('SMTP_PORT') ?? '587');
-    const user = this.configService.get<string>('SMTP_USER');
-    const pass = this.configService.get<string>('SMTP_PASS');
-    const from =
-      this.configService.get<string>('SMTP_FROM') ?? 'no-reply@example.com';
+    const smtp = await this.settingsService.getResolvedSmtpConfig();
+    const { host, port, user, pass, from } = smtp;
 
     if (!host || !user || !pass || !notification.email) {
       notification.status = NotificationStatus.SKIPPED;
@@ -191,7 +287,7 @@ export class NotificationsService {
       const transporter = nodemailer.createTransport({
         host,
         port,
-        secure: port === 465,
+        secure: smtp.secure,
         auth: { user, pass },
       });
 

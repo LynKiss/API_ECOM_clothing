@@ -1,18 +1,25 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { CategoryEntity } from '../categories/entities/category.entity';
 import { DiscountCategoryEntity } from '../discounts/entities/discount-category.entity';
 import { DiscountProductEntity } from '../discounts/entities/discount-product.entity';
 import { DiscountEntity } from '../discounts/entities/discount.entity';
 import { UserEntity } from '../users/entities/user.entity';
+import { WarehouseEntity } from '../warehouses/entities/warehouse.entity';
+import { WarehouseStockEntity } from '../warehouses/entities/warehouse-stock.entity';
 import { InventoryTransactionEntity } from './entities/inventory-transaction.entity';
+import { ColorEntity } from './entities/color.entity';
 import { OriginEntity } from './entities/origin.entity';
 import { ProductDescriptionImageEntity } from './entities/product-description-image.entity';
 import { ProductImageEntity } from './entities/product-image.entity';
 import { ProductTagEntity } from './entities/product-tag.entity';
+import { ProductVariantEntity } from './entities/product-variant.entity';
 import { ProductEntity } from './entities/product.entity';
+import { SizeEntity } from './entities/size.entity';
 import { SubcategoryEntity } from './entities/subcategory.entity';
 import { TagEntity } from './entities/tag.entity';
+import { VariantImageEntity } from './entities/variant-image.entity';
 import { WishlistEntity } from './entities/wishlist.entity';
 import { InventoryController } from './inventory.controller';
 import { OriginsController } from './origins.controller';
@@ -27,6 +34,7 @@ import { WishlistController } from './wishlist.controller';
 
 @Module({
   imports: [
+    NotificationsModule,
     TypeOrmModule.forFeature([
       ProductEntity,
       CategoryEntity,
@@ -36,8 +44,14 @@ import { WishlistController } from './wishlist.controller';
       ProductImageEntity,
       ProductDescriptionImageEntity,
       ProductTagEntity,
+      ProductVariantEntity,
+      ColorEntity,
+      SizeEntity,
+      VariantImageEntity,
       InventoryTransactionEntity,
       WishlistEntity,
+      WarehouseEntity,
+      WarehouseStockEntity,
       UserEntity,
       DiscountEntity,
       DiscountCategoryEntity,

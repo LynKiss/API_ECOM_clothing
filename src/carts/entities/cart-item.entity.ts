@@ -21,6 +21,9 @@ export class CartItemEntity {
   @Column({ name: 'product_id', type: 'char', length: 36 })
   productId: string;
 
+  @Column({ name: 'variant_id', type: 'char', length: 36, nullable: true })
+  variantId: string | null;
+
   @Column({ name: 'quantity', type: 'int' })
   quantity: number;
 

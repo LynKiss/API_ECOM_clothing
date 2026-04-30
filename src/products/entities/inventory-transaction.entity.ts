@@ -27,6 +27,9 @@ export class InventoryTransactionEntity {
   @Column({ name: 'product_id', type: 'char', length: 36 })
   productId: string;
 
+  @Column({ name: 'variant_id', type: 'char', length: 36, nullable: true })
+  variantId: string | null;
+
   @Column({ name: 'performed_by', type: 'char', length: 36, nullable: true })
   performedBy: string | null;
 
@@ -39,6 +42,27 @@ export class InventoryTransactionEntity {
 
   @Column({ name: 'quantity_change', type: 'int' })
   quantityChange: number;
+
+  @Column({ name: 'quantity_before', type: 'int', nullable: true })
+  quantityBefore: number | null;
+
+  @Column({ name: 'quantity_after', type: 'int', nullable: true })
+  quantityAfter: number | null;
+
+  @Column({
+    name: 'unit_cost_at_time',
+    type: 'decimal',
+    precision: 15,
+    scale: 4,
+    nullable: true,
+  })
+  unitCostAtTime: string | null;
+
+  @Column({ name: 'reference_type', type: 'varchar', length: 50, nullable: true })
+  referenceType: string | null;
+
+  @Column({ name: 'reference_id', type: 'varchar', length: 36, nullable: true })
+  referenceId: string | null;
 
   @Column({ name: 'note', type: 'varchar', length: 500, nullable: true })
   note: string | null;

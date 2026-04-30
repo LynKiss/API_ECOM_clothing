@@ -2,16 +2,19 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  Index,
   PrimaryColumn,
   UpdateDateColumn,
 } from 'typeorm';
 
 export enum OrderStatus {
   PENDING = 'pending',
+  BACKORDERED = 'backordered',
   CONFIRMED = 'confirmed',
   PROCESSING = 'processing',
   SHIPPING = 'shipping',
   DELIVERED = 'delivered',
+  PARTIAL_DELIVERED = 'partial_delivered',
   CANCELLED = 'cancelled',
   RETURNED = 'returned',
 }
@@ -137,6 +140,15 @@ export class OrderEntity {
 
   @Column({ name: 'address', type: 'varchar', length: 500 })
   address: string;
+
+  @Index('idx_orders_idempotency_key', { unique: true })
+  @Column({
+    name: 'idempotency_key',
+    type: 'varchar',
+    length: 100,
+    nullable: true,
+  })
+  idempotencyKey: string | null;
 
   @CreateDateColumn({ name: 'created_at', type: 'datetime' })
   createdAt: Date;

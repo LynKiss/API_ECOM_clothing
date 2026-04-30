@@ -1,12 +1,17 @@
 import { randomUUID } from 'node:crypto';
+import { createHmac } from 'node:crypto';
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { EntityManager, In, LessThan, Repository } from 'typeorm';
+import { WarehouseEntity } from '../warehouses/entities/warehouse.entity';
+import { WarehouseStockEntity } from '../warehouses/entities/warehouse-stock.entity';
 import { CartItemEntity } from '../carts/entities/cart-item.entity';
 import { ShoppingCartEntity } from '../carts/entities/shopping-cart.entity';
 import { DiscountCategoryEntity } from '../discounts/entities/discount-category.entity';
@@ -21,19 +26,33 @@ import {
   InventoryTransactionEntity,
   InventoryTransactionType,
 } from '../products/entities/inventory-transaction.entity';
+import { ColorEntity } from '../products/entities/color.entity';
 import { ProductEntity } from '../products/entities/product.entity';
+import { ProductVariantEntity } from '../products/entities/product-variant.entity';
+import { SizeEntity } from '../products/entities/size.entity';
 import { NotificationsService } from '../notifications/notifications.service';
+import { OrdersAdminPublisher } from './orders-admin.publisher';
+import { SettingsService } from '../settings/settings.service';
 import type { IUser } from '../users/users.interface';
 import { UserEntity } from '../users/entities/user.entity';
+import { withDeadlockRetry } from '../common/transaction.util';
+import { verifyMomoSignature } from '../common/payment-signature.util';
 import { CreateReturnDto } from './dto/create-return.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { InitiatePaymentDto } from './dto/initiate-payment.dto';
 import { PaymentCallbackDto } from './dto/payment-callback.dto';
 import { QueryOrdersDto } from './dto/query-orders.dto';
+import { UpdateOrderTrackingLiveDto } from './dto/update-order-tracking-live.dto';
+import { UpdateOrderTrackingManualDto } from './dto/update-order-tracking-manual.dto';
+import { UpdateOrderTrackingModeDto } from './dto/update-order-tracking-mode.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { UpdateReturnStatusDto } from './dto/update-return-status.dto';
 import { DeliveryMethodEntity } from './entities/delivery-method.entity';
 import { OrderItemEntity } from './entities/order-item.entity';
+import {
+  OrderTrackingEntity,
+  OrderTrackingMode,
+} from './entities/order-tracking.entity';
 import {
   OrderEntity,
   OrderStatus,
@@ -45,11 +64,19 @@ import {
   PaymentTransactionEntity,
   PaymentTransactionStatus,
 } from './entities/payment-transaction.entity';
-import { ReturnEntity, ReturnStatus } from './entities/return.entity';
+import {
+  ReturnEntity,
+  ReturnInspectionStatus,
+  ReturnStatus,
+} from './entities/return.entity';
 import { ShippingAddressEntity } from './entities/shipping-address.entity';
 
 @Injectable()
 export class OrdersService {
+  private readonly logger = new Logger(OrdersService.name);
+  private readonly liveTrackingFreshnessMs = 2 * 60 * 1000;
+  private readonly stalePaymentTtlMs = 30 * 60 * 1000; // 30 phút
+
   constructor(
     @InjectRepository(DeliveryMethodEntity)
     private readonly deliveryMethodsRepository: Repository<DeliveryMethodEntity>,
@@ -57,6 +84,8 @@ export class OrdersService {
     private readonly shippingAddressesRepository: Repository<ShippingAddressEntity>,
     @InjectRepository(OrderEntity)
     private readonly ordersRepository: Repository<OrderEntity>,
+    @InjectRepository(OrderTrackingEntity)
+    private readonly orderTrackingRepository: Repository<OrderTrackingEntity>,
     @InjectRepository(OrderItemEntity)
     private readonly orderItemsRepository: Repository<OrderItemEntity>,
     @InjectRepository(OrderStatusHistoryEntity)
@@ -67,6 +96,12 @@ export class OrdersService {
     private readonly cartItemsRepository: Repository<CartItemEntity>,
     @InjectRepository(ProductEntity)
     private readonly productsRepository: Repository<ProductEntity>,
+    @InjectRepository(ProductVariantEntity)
+    private readonly productVariantsRepository: Repository<ProductVariantEntity>,
+    @InjectRepository(ColorEntity)
+    private readonly colorsRepository: Repository<ColorEntity>,
+    @InjectRepository(SizeEntity)
+    private readonly sizesRepository: Repository<SizeEntity>,
     @InjectRepository(InventoryTransactionEntity)
     private readonly inventoryTransactionsRepository: Repository<InventoryTransactionEntity>,
     @InjectRepository(UserEntity)
@@ -84,7 +119,37 @@ export class OrdersService {
     @InjectRepository(PaymentTransactionEntity)
     private readonly paymentTransactionsRepository: Repository<PaymentTransactionEntity>,
     private readonly notificationsService: NotificationsService,
+    private readonly ordersAdminPublisher: OrdersAdminPublisher,
+    private readonly settingsService: SettingsService,
   ) {}
+
+  private async syncDefaultWarehouseStock(
+    em: EntityManager,
+    productId: string,
+    qtyDelta: number,
+  ): Promise<void> {
+    if (qtyDelta === 0) return;
+    const warehouse = await em.findOne(WarehouseEntity, {
+      where: { isDefault: true },
+    });
+    if (!warehouse) return;
+    const stock = await em.findOne(WarehouseStockEntity, {
+      where: { warehouseId: warehouse.warehouseId, productId },
+    });
+    if (stock) {
+      stock.quantity = Math.max(0, stock.quantity + qtyDelta);
+      await em.save(WarehouseStockEntity, stock);
+    } else if (qtyDelta > 0) {
+      await em.save(
+        WarehouseStockEntity,
+        em.create(WarehouseStockEntity, {
+          warehouseId: warehouse.warehouseId,
+          productId,
+          quantity: qtyDelta,
+        }),
+      );
+    }
+  }
 
   private async ensureUserExists(userId: string) {
     const user = await this.usersRepository.findOneBy({ userId });
@@ -119,12 +184,148 @@ export class OrdersService {
     );
   }
 
+  private async findAccessibleOrder(currentUser: IUser, orderId: string) {
+    return this.hasManageOrdersPermission(currentUser)
+      ? this.findAnyOrder(orderId)
+      : this.findOwnedOrder(currentUser._id, orderId);
+  }
+
+  private async findOrCreateOrderTracking(orderId: string) {
+    const existing = await this.orderTrackingRepository.findOneBy({ orderId });
+    if (existing) {
+      return existing;
+    }
+
+    const created = this.orderTrackingRepository.create({
+      orderId,
+      mode: OrderTrackingMode.AUTO_FALLBACK,
+      manualLatitude: null,
+      manualLongitude: null,
+      manualNote: null,
+      manualUpdatedAt: null,
+      manualUpdatedBy: null,
+      gpsLatitude: null,
+      gpsLongitude: null,
+      gpsHeading: null,
+      gpsSpeedKph: null,
+      gpsProvider: null,
+      gpsUpdatedAt: null,
+    });
+
+    return this.orderTrackingRepository.save(created);
+  }
+
+  private toNullableNumber(value: string | number | null | undefined) {
+    if (value === null || value === undefined || value === '') {
+      return null;
+    }
+
+    const next = Number(value);
+    return Number.isFinite(next) ? next : null;
+  }
+
+  private mapTrackingPoint(input: {
+    latitude: string | null;
+    longitude: string | null;
+    updatedAt: Date | null;
+    note?: string | null;
+    updatedBy?: string | null;
+    heading?: string | null;
+    speedKph?: string | null;
+    provider?: string | null;
+  }) {
+    const latitude = this.toNullableNumber(input.latitude);
+    const longitude = this.toNullableNumber(input.longitude);
+
+    if (latitude === null || longitude === null) {
+      return null;
+    }
+
+    return {
+      latitude,
+      longitude,
+      updatedAt: input.updatedAt,
+      note: input.note ?? null,
+      updatedBy: input.updatedBy ?? null,
+      heading: this.toNullableNumber(input.heading),
+      speedKph: this.toNullableNumber(input.speedKph),
+      provider: input.provider ?? null,
+    };
+  }
+
+  private mapOrderTracking(tracking: OrderTrackingEntity) {
+    const manualLocation = this.mapTrackingPoint({
+      latitude: tracking.manualLatitude,
+      longitude: tracking.manualLongitude,
+      updatedAt: tracking.manualUpdatedAt,
+      note: tracking.manualNote,
+      updatedBy: tracking.manualUpdatedBy,
+    });
+    const gpsLocation = this.mapTrackingPoint({
+      latitude: tracking.gpsLatitude,
+      longitude: tracking.gpsLongitude,
+      updatedAt: tracking.gpsUpdatedAt,
+      heading: tracking.gpsHeading,
+      speedKph: tracking.gpsSpeedKph,
+      provider: tracking.gpsProvider,
+    });
+
+    const gpsSignalFresh = Boolean(
+      gpsLocation &&
+        tracking.gpsUpdatedAt &&
+        Date.now() - tracking.gpsUpdatedAt.getTime() <=
+          this.liveTrackingFreshnessMs,
+    );
+
+    let activeSource: 'manual' | 'gps' | 'none' = 'none';
+    let activeLocation: ReturnType<OrdersService['mapTrackingPoint']> = null;
+
+    if (tracking.mode === OrderTrackingMode.DEMO) {
+      activeSource = manualLocation ? 'manual' : 'none';
+      activeLocation = manualLocation;
+    } else if (tracking.mode === OrderTrackingMode.LIVE) {
+      activeSource = gpsLocation ? 'gps' : 'none';
+      activeLocation = gpsLocation;
+    } else if (gpsSignalFresh && gpsLocation) {
+      activeSource = 'gps';
+      activeLocation = gpsLocation;
+    } else if (manualLocation) {
+      activeSource = 'manual';
+      activeLocation = manualLocation;
+    } else if (gpsLocation) {
+      activeSource = 'gps';
+      activeLocation = gpsLocation;
+    }
+
+    return {
+      orderId: tracking.orderId,
+      mode: tracking.mode,
+      gpsSignalFresh,
+      activeSource,
+      activeLocation,
+      manualLocation,
+      gpsLocation,
+      updatedAt: tracking.updatedAt,
+    };
+  }
+
   private isOnlinePaymentMethod(method: PaymentMethod) {
     return [
       PaymentMethod.MOMO,
       PaymentMethod.VNPAY,
       PaymentMethod.ZALOPAY,
     ].includes(method);
+  }
+
+  private async ensurePaymentMethodEnabled(method: PaymentMethod) {
+    if (method === PaymentMethod.PAYPAL) {
+      throw new BadRequestException('Payment method is not supported');
+    }
+
+    const isActive = await this.settingsService.isPaymentMethodActive(method);
+    if (!isActive) {
+      throw new BadRequestException('Payment method is currently disabled');
+    }
   }
 
   private validateReturnStatusTransition(
@@ -135,7 +336,9 @@ export class OrdersService {
       [ReturnStatus.REQUESTED]: [ReturnStatus.APPROVED, ReturnStatus.REJECTED],
       [ReturnStatus.APPROVED]: [ReturnStatus.RECEIVED, ReturnStatus.REJECTED],
       [ReturnStatus.REJECTED]: [],
-      [ReturnStatus.RECEIVED]: [ReturnStatus.REFUNDED],
+      // RECEIVED → INSPECTED (sau khi admin gọi inspect endpoint)
+      [ReturnStatus.RECEIVED]: [ReturnStatus.INSPECTED, ReturnStatus.REFUNDED],
+      [ReturnStatus.INSPECTED]: [ReturnStatus.REFUNDED],
       [ReturnStatus.REFUNDED]: [],
     };
 
@@ -151,6 +354,34 @@ export class OrdersService {
     ]
       .filter((value) => value && value.trim().length > 0)
       .join(', ');
+  }
+
+  private async getVariantSnapshots(variantIds: string[]) {
+    const uniqueVariantIds = [...new Set(variantIds.filter(Boolean))];
+    if (uniqueVariantIds.length === 0) {
+      return new Map<string, { variant: ProductVariantEntity; colorName: string | null; sizeName: string | null }>();
+    }
+    const variants = await this.productVariantsRepository.find({
+      where: { variantId: In(uniqueVariantIds) },
+    });
+    const colorIds = [...new Set(variants.map((variant) => variant.colorId).filter((id): id is string => Boolean(id)))];
+    const sizeIds = [...new Set(variants.map((variant) => variant.sizeId).filter((id): id is string => Boolean(id)))];
+    const [colors, sizes] = await Promise.all([
+      colorIds.length ? this.colorsRepository.find({ where: { colorId: In(colorIds) } }) : Promise.resolve([]),
+      sizeIds.length ? this.sizesRepository.find({ where: { sizeId: In(sizeIds) } }) : Promise.resolve([]),
+    ]);
+    const colorById = new Map(colors.map((color) => [color.colorId, color.colorName]));
+    const sizeById = new Map(sizes.map((size) => [size.sizeId, size.sizeName]));
+    return new Map(
+      variants.map((variant) => [
+        variant.variantId,
+        {
+          variant,
+          colorName: variant.colorId ? colorById.get(variant.colorId) ?? null : null,
+          sizeName: variant.sizeId ? sizeById.get(variant.sizeId) ?? null : null,
+        },
+      ]),
+    );
   }
 
   private calculateDeliveryCost(
@@ -316,6 +547,10 @@ export class OrdersService {
       items: items.map((item) => ({
         id: item.orderItemId,
         productId: item.productId,
+        variantId: item.variantId,
+        sku: item.sku,
+        colorName: item.colorName,
+        sizeName: item.sizeName,
         productName: item.productName,
         quantity: item.quantity,
         unitPrice: item.unitPrice,
@@ -349,15 +584,31 @@ export class OrdersService {
     };
   }
 
+  private async notifyAdminsAboutNewOrder(order: OrderEntity) {
+    await this.notificationsService.sendAdminOrderCreatedNotification({
+      orderId: order.orderId,
+      fullName: order.fullName,
+      phone: order.phone,
+      totalPayment: order.totalPayment,
+    });
+    this.ordersAdminPublisher.emitNewOrder(order);
+  }
+
   private isValidAdminStatusTransition(
     currentStatus: OrderStatus,
     nextStatus: OrderStatus,
   ) {
     const allowedTransitions: Record<OrderStatus, OrderStatus[]> = {
+      [OrderStatus.BACKORDERED]: [OrderStatus.PENDING, OrderStatus.CANCELLED],
       [OrderStatus.PENDING]: [OrderStatus.CONFIRMED, OrderStatus.CANCELLED],
       [OrderStatus.CONFIRMED]: [OrderStatus.PROCESSING, OrderStatus.CANCELLED],
       [OrderStatus.PROCESSING]: [OrderStatus.SHIPPING, OrderStatus.CANCELLED],
-      [OrderStatus.SHIPPING]: [OrderStatus.DELIVERED, OrderStatus.RETURNED],
+      [OrderStatus.SHIPPING]: [
+        OrderStatus.DELIVERED,
+        OrderStatus.PARTIAL_DELIVERED,
+        OrderStatus.RETURNED,
+      ],
+      [OrderStatus.PARTIAL_DELIVERED]: [OrderStatus.RETURNED],
       [OrderStatus.DELIVERED]: [OrderStatus.RETURNED],
       [OrderStatus.CANCELLED]: [],
       [OrderStatus.RETURNED]: [],
@@ -370,18 +621,70 @@ export class OrdersService {
     orderId: string,
     productRepository: Repository<ProductEntity>,
     orderItemsRepository: Repository<OrderItemEntity>,
+    entityManager?: EntityManager,
   ) {
     const items = await orderItemsRepository.find({
       where: { orderId },
     });
+    const variantRepository = entityManager?.getRepository(ProductVariantEntity);
 
     for (const item of items) {
-      const product = await productRepository.findOneBy({
-        productId: item.productId,
+      // Lock pessimistic khi restock — tránh race condition khi cancel song song
+      const product = await productRepository.findOne({
+        where: { productId: item.productId },
+        lock: entityManager ? { mode: 'pessimistic_write' } : undefined,
       });
 
       if (product) {
         product.quantityAvailable += item.quantity;
+        product.quantityReserved = Math.max(
+          0,
+          (product.quantityReserved ?? 0) - item.quantity,
+        );
+        await productRepository.save(product);
+
+        if (variantRepository && item.variantId) {
+          const variant = await variantRepository.findOne({
+            where: { variantId: item.variantId },
+            lock: { mode: 'pessimistic_write' },
+          });
+          if (variant) {
+            variant.stockQuantity += item.quantity;
+            await variantRepository.save(variant);
+          }
+        }
+
+        if (entityManager) {
+          await this.syncDefaultWarehouseStock(
+            entityManager,
+            item.productId,
+            item.quantity,
+          );
+        }
+      }
+    }
+  }
+
+  /**
+   * Khi đơn DELIVERED — không restock, chỉ giải phóng quantityReserved
+   * (hàng đã thực sự rời kho, không trả về stock).
+   */
+  private async releaseReservedOnDelivered(
+    orderId: string,
+    productRepository: Repository<ProductEntity>,
+    orderItemsRepository: Repository<OrderItemEntity>,
+  ) {
+    const items = await orderItemsRepository.find({ where: { orderId } });
+    for (const item of items) {
+      const product = await productRepository.findOne({
+        where: { productId: item.productId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (product) {
+        product.quantityReserved = Math.max(
+          0,
+          (product.quantityReserved ?? 0) - item.quantity,
+        );
         await productRepository.save(product);
       }
     }
@@ -408,8 +711,258 @@ export class OrdersService {
     await couponUsageRepository.delete({ orderId: order.orderId });
   }
 
-  async createOrder(userId: string, createOrderDto: CreateOrderDto) {
+  /**
+   * Đặt hàng cho khách vãng lai (không cần đăng ký tài khoản).
+   *
+   * Khác createOrder thường:
+   * 1. Không cần userId — guest cung cấp thông tin shipping trực tiếp
+   * 2. Tạo userId tạm dạng `guest-<uuid>` chỉ để thoả mãn FK constraint
+   * 3. Không lấy giá từ cart (vì không có cart) — lấy giá hiện tại từ products
+   * 4. Không support discount code (đơn giản hơn) — có thể bổ sung sau
+   * 5. Vẫn dùng pessimistic lock + idempotency + reservation pattern
+   */
+  async createGuestOrder(dto: import('./dto/create-guest-order.dto').CreateGuestOrderDto, idempotencyKey?: string) {
+    await this.ensurePaymentMethodEnabled(dto.paymentMethod);
+
+    if (idempotencyKey) {
+      const existing = await this.ordersRepository.findOne({
+        where: { idempotencyKey },
+      });
+      if (existing) {
+        return this.buildOrderDetail(await this.findAnyOrder(existing.orderId));
+      }
+    }
+
+    const deliveryMethod = await this.deliveryMethodsRepository.findOneBy({
+      deliveryId: dto.deliveryId,
+    });
+    if (!deliveryMethod || !deliveryMethod.isActive) {
+      throw new NotFoundException('Phương thức giao hàng không khả dụng');
+    }
+
+    const productIds = [...new Set(dto.items.map((it) => it.productId))];
+    const products = await this.productsRepository.findBy(
+      productIds.map((productId) => ({ productId })),
+    );
+    const productsById = new Map(
+      products.map((product) => [product.productId, product]),
+    );
+    const guestVariantIds = [...new Set(dto.items.map((it) => it.variantId).filter((id): id is string => Boolean(id)))];
+    const guestVariantsById = await this.getVariantSnapshots(guestVariantIds);
+
+    let subtotalAmount = 0;
+    let totalQuantity = 0;
+    let isBackorder = false;
+
+    for (const item of dto.items) {
+      const product = productsById.get(item.productId);
+      if (!product || !product.isShow) {
+        throw new BadRequestException('Sản phẩm không khả dụng');
+      }
+      if (item.quantity > product.quantityAvailable) {
+        if (!dto.allowBackorder) {
+          throw new BadRequestException(
+            `Sản phẩm ${product.productName} không đủ tồn kho`,
+          );
+        }
+        isBackorder = true;
+      }
+      const price =
+        Number(product.productPriceSale ?? 0) > 0
+          ? Number(product.productPriceSale)
+          : Number(product.productPrice);
+      subtotalAmount += price * item.quantity;
+      totalQuantity += item.quantity;
+    }
+
+    const deliveryCost = this.calculateDeliveryCost(deliveryMethod, subtotalAmount);
+    const totalPayment = subtotalAmount + deliveryCost;
+    const orderId = randomUUID();
+    const guestUserId = `guest-${randomUUID()}`.slice(0, 36);
+    const addressSnapshot = [
+      dto.shipping.addressLine,
+      dto.shipping.ward,
+      dto.shipping.district,
+      dto.shipping.province,
+    ]
+      .filter(Boolean)
+      .join(', ');
+
+    await withDeadlockRetry(() =>
+      this.ordersRepository.manager.transaction(async (entityManager) => {
+        const trxOrders = entityManager.getRepository(OrderEntity);
+        const trxItems = entityManager.getRepository(OrderItemEntity);
+        const trxHistory = entityManager.getRepository(OrderStatusHistoryEntity);
+        const trxProducts = entityManager.getRepository(ProductEntity);
+        const trxVariants = entityManager.getRepository(ProductVariantEntity);
+        const trxInvTx = entityManager.getRepository(InventoryTransactionEntity);
+
+        if (idempotencyKey) {
+          const dup = await trxOrders.findOne({ where: { idempotencyKey } });
+          if (dup) return;
+        }
+
+        const order = trxOrders.create({
+          orderId,
+          userId: guestUserId,
+          shippingAddressId: null,
+          deliveryId: deliveryMethod.deliveryId,
+          discountId: null,
+          orderStatus: isBackorder ? OrderStatus.BACKORDERED : OrderStatus.PENDING,
+          paymentMethod: dto.paymentMethod,
+          paymentStatus: PaymentStatus.UNPAID,
+          subtotalAmount: subtotalAmount.toFixed(2),
+          discountAmount: '0.00',
+          deliveryCost: deliveryCost.toFixed(2),
+          totalPayment: totalPayment.toFixed(2),
+          totalQuantity,
+          note:
+            (dto.note ? `${dto.note}\n` : '') +
+            `[GUEST] ${dto.shipping.email ?? ''}`.trim(),
+          fullName: dto.shipping.recipientName,
+          phone: dto.shipping.phone,
+          address: addressSnapshot,
+          idempotencyKey: idempotencyKey ?? null,
+        });
+        await trxOrders.save(order);
+
+        for (const item of dto.items) {
+          const product = await trxProducts.findOne({
+            where: { productId: item.productId },
+            lock: { mode: 'pessimistic_write' },
+          });
+          if (!product) {
+            throw new BadRequestException('Sản phẩm không tồn tại');
+          }
+          const variantSnapshot = item.variantId ? guestVariantsById.get(item.variantId) : null;
+          const variant = item.variantId
+            ? await trxVariants.findOne({
+                where: { variantId: item.variantId, productId: item.productId },
+                lock: { mode: 'pessimistic_write' },
+              })
+            : null;
+          if (item.variantId && (!variant || !variant.isActive)) {
+            throw new BadRequestException('Bien the san pham khong kha dung');
+          }
+          const availableQuantity = variant?.stockQuantity ?? product.quantityAvailable;
+          const isLineBackorder = item.quantity > availableQuantity;
+          if (isLineBackorder && !dto.allowBackorder) {
+            throw new BadRequestException(
+              `Sản phẩm ${product.productName} không đủ tồn kho`,
+            );
+          }
+
+          const unitPrice = variant
+            ? variant.salePrice ?? variant.price ?? product.productPriceSale ?? product.productPrice
+            : Number(product.productPriceSale ?? 0) > 0
+              ? product.productPriceSale!
+              : product.productPrice;
+          const lineTotal = Number(unitPrice) * item.quantity;
+
+          const orderItem = trxItems.create({
+            orderId,
+            productId: item.productId,
+            variantId: variant?.variantId ?? null,
+            productName: product.productName,
+            sku: variant?.sku ?? null,
+            colorName: variantSnapshot?.colorName ?? null,
+            sizeName: variantSnapshot?.sizeName ?? null,
+            quantity: item.quantity,
+            unitPrice,
+            lineTotal: lineTotal.toFixed(2),
+          });
+          await trxItems.save(orderItem);
+
+          if (isLineBackorder) continue;
+
+          const qtyBefore = variant?.stockQuantity ?? product.quantityAvailable;
+          if (variant) {
+            variant.stockQuantity -= item.quantity;
+            await trxVariants.save(variant);
+          }
+          product.quantityAvailable -= item.quantity;
+          product.quantityReserved =
+            (product.quantityReserved ?? 0) + item.quantity;
+          await trxProducts.save(product);
+
+          await trxInvTx.save(
+            trxInvTx.create({
+              productId: item.productId,
+              performedBy: null,
+              transactionType: InventoryTransactionType.EXPORT,
+              quantityChange: -item.quantity,
+              quantityBefore: qtyBefore,
+              quantityAfter: variant?.stockQuantity ?? product.quantityAvailable,
+              variantId: variant?.variantId ?? null,
+              referenceType: 'ORDER',
+              referenceId: orderId,
+              unitCostAtTime: product.avgCost ?? null,
+              note: 'Guest order checkout',
+              relatedOrderId: orderId,
+            }),
+          );
+          await this.syncDefaultWarehouseStock(
+            entityManager,
+            item.productId,
+            -item.quantity,
+          );
+        }
+
+        await trxHistory.save(
+          trxHistory.create({
+            orderId,
+            oldStatus: null,
+            newStatus: isBackorder ? OrderStatus.BACKORDERED : OrderStatus.PENDING,
+            changedBy: null,
+            note: 'Guest order created',
+          }),
+        );
+      }),
+    );
+
+    const created = await this.findAnyOrder(orderId);
+    await this.notifyAdminsAboutNewOrder(created);
+    return this.buildOrderDetail(created);
+  }
+
+  /**
+   * Tra cứu đơn guest bằng orderId + phone (verify nhẹ — anyone biết cả 2 sẽ xem được).
+   */
+  async findGuestOrder(orderId: string, phone: string) {
+    if (!phone || !orderId) {
+      throw new BadRequestException('Cần cung cấp orderId và phone');
+    }
+    const order = await this.ordersRepository.findOne({
+      where: { orderId },
+    });
+    if (!order) throw new NotFoundException('Không tìm thấy đơn hàng');
+    if (!order.userId.startsWith('guest-')) {
+      throw new UnauthorizedException('Đơn này thuộc tài khoản đăng ký, hãy đăng nhập để xem');
+    }
+    if (order.phone.replace(/\s+/g, '') !== phone.replace(/\s+/g, '')) {
+      throw new UnauthorizedException('Số điện thoại không khớp');
+    }
+    return this.buildOrderDetail(order);
+  }
+
+  async createOrder(
+    userId: string,
+    createOrderDto: CreateOrderDto,
+    idempotencyKey?: string,
+  ) {
     await this.ensureUserExists(userId);
+    await this.ensurePaymentMethodEnabled(createOrderDto.paymentMethod);
+
+    if (idempotencyKey) {
+      const existing = await this.ordersRepository.findOne({
+        where: { idempotencyKey, userId },
+      });
+      if (existing) {
+        return this.buildOrderDetail(
+          await this.findOwnedOrder(userId, existing.orderId),
+        );
+      }
+    }
 
     const cart = await this.cartsRepository.findOneBy({ userId });
     if (!cart) {
@@ -449,20 +1002,31 @@ export class OrdersService {
     const productsById = new Map(
       products.map((product) => [product.productId, product]),
     );
+    const cartVariantIds = [...new Set(cartItems.map((item) => item.variantId).filter((id): id is string => Boolean(id)))];
+    const cartVariantsById = await this.getVariantSnapshots(cartVariantIds);
 
     let subtotalAmount = 0;
     let totalQuantity = 0;
+    let isBackorder = false;
 
     for (const cartItem of cartItems) {
       const product = productsById.get(cartItem.productId);
       if (!product || !product.isShow) {
         throw new BadRequestException('One or more products are unavailable');
       }
-
-      if (cartItem.quantity > product.quantityAvailable) {
-        throw new BadRequestException('One or more cart items exceed stock');
+      const variantSnapshot = cartItem.variantId ? cartVariantsById.get(cartItem.variantId) : null;
+      if (cartItem.variantId && (!variantSnapshot || variantSnapshot.variant.productId !== cartItem.productId || !variantSnapshot.variant.isActive)) {
+        throw new BadRequestException('Bien the san pham khong kha dung');
       }
-
+      const availableQuantity = variantSnapshot?.variant.stockQuantity ?? product.quantityAvailable;
+      if (cartItem.quantity > availableQuantity) {
+        if (!createOrderDto.allowBackorder) {
+          throw new BadRequestException(
+            `Sản phẩm ${product.productName} không đủ tồn kho`,
+          );
+        }
+        isBackorder = true;
+      }
       subtotalAmount += Number(cartItem.priceAtAdded) * cartItem.quantity;
       totalQuantity += cartItem.quantity;
     }
@@ -489,111 +1053,189 @@ export class OrdersService {
     const addressSnapshot = this.buildAddressSnapshot(shippingAddress);
     const orderId = randomUUID();
 
-    await this.ordersRepository.manager.transaction(async (entityManager) => {
-      const transactionalOrdersRepository =
-        entityManager.getRepository(OrderEntity);
-      const transactionalOrderItemsRepository =
-        entityManager.getRepository(OrderItemEntity);
-      const transactionalHistoryRepository = entityManager.getRepository(
-        OrderStatusHistoryEntity,
-      );
-      const transactionalProductsRepository =
-        entityManager.getRepository(ProductEntity);
-      const transactionalCartItemsRepository =
-        entityManager.getRepository(CartItemEntity);
-      const transactionalInventoryTransactionsRepository =
-        entityManager.getRepository(InventoryTransactionEntity);
-      const transactionalDiscountsRepository =
-        entityManager.getRepository(DiscountEntity);
-      const transactionalCouponUsageRepository =
-        entityManager.getRepository(CouponUsageEntity);
+    // Stock deduction inside a transaction with pessimistic_write lock per product
+    // → tránh oversell khi nhiều request đồng thời cùng mua sản phẩm cuối cùng.
+    // → tự retry tối đa 3 lần khi gặp deadlock MySQL.
+    await withDeadlockRetry(() =>
+      this.ordersRepository.manager.transaction(async (entityManager) => {
+        const transactionalOrdersRepository =
+          entityManager.getRepository(OrderEntity);
+        const transactionalOrderItemsRepository =
+          entityManager.getRepository(OrderItemEntity);
+        const transactionalHistoryRepository = entityManager.getRepository(
+          OrderStatusHistoryEntity,
+        );
+        const transactionalProductsRepository =
+          entityManager.getRepository(ProductEntity);
+        const transactionalVariantsRepository =
+          entityManager.getRepository(ProductVariantEntity);
+        const transactionalCartItemsRepository =
+          entityManager.getRepository(CartItemEntity);
+        const transactionalInventoryTransactionsRepository =
+          entityManager.getRepository(InventoryTransactionEntity);
+        const transactionalDiscountsRepository =
+          entityManager.getRepository(DiscountEntity);
+        const transactionalCouponUsageRepository =
+          entityManager.getRepository(CouponUsageEntity);
 
-      const order = transactionalOrdersRepository.create({
-        orderId,
-        userId,
-        shippingAddressId: shippingAddress.shippingAddressId,
-        deliveryId: deliveryMethod.deliveryId,
-        discountId: discount?.discountId ?? null,
-        orderStatus: OrderStatus.PENDING,
-        paymentMethod: createOrderDto.paymentMethod,
-        paymentStatus: PaymentStatus.UNPAID,
-        subtotalAmount: subtotalAmount.toFixed(2),
-        discountAmount: discountAmount.toFixed(2),
-        deliveryCost: deliveryCost.toFixed(2),
-        totalPayment: totalPayment.toFixed(2),
-        totalQuantity,
-        note: createOrderDto.note ?? null,
-        fullName: shippingAddress.recipientName,
-        phone: shippingAddress.phone,
-        address: addressSnapshot,
-      });
-
-      await transactionalOrdersRepository.save(order);
-
-      for (const cartItem of cartItems) {
-        const product = productsById.get(cartItem.productId);
-        if (!product) {
-          throw new BadRequestException('One or more products are unavailable');
+        // Idempotency double-check inside transaction (race window protection)
+        if (idempotencyKey) {
+          const dup = await transactionalOrdersRepository.findOne({
+            where: { idempotencyKey, userId },
+          });
+          if (dup) {
+            return;
+          }
         }
 
-        const lineTotal = Number(cartItem.priceAtAdded) * cartItem.quantity;
-
-        const orderItem = transactionalOrderItemsRepository.create({
+        const order = transactionalOrdersRepository.create({
           orderId,
-          productId: cartItem.productId,
-          productName: product.productName,
-          quantity: cartItem.quantity,
-          unitPrice: cartItem.priceAtAdded,
-          lineTotal: lineTotal.toFixed(2),
-        });
-
-        product.quantityAvailable -= cartItem.quantity;
-        await transactionalProductsRepository.save(product);
-        await transactionalOrderItemsRepository.save(orderItem);
-
-        const inventoryTransaction =
-          transactionalInventoryTransactionsRepository.create({
-            productId: product.productId,
-            performedBy: userId,
-            transactionType: InventoryTransactionType.EXPORT,
-            quantityChange: -cartItem.quantity,
-            note: 'Export by order checkout',
-            relatedOrderId: orderId,
-          });
-        await transactionalInventoryTransactionsRepository.save(
-          inventoryTransaction,
-        );
-      }
-
-      if (discount) {
-        discount.usedCount += 1;
-        await transactionalDiscountsRepository.save(discount);
-
-        const couponUsage = transactionalCouponUsageRepository.create({
-          discountId: discount.discountId,
           userId,
-          orderId,
+          shippingAddressId: shippingAddress.shippingAddressId,
+          deliveryId: deliveryMethod.deliveryId,
+          discountId: discount?.discountId ?? null,
+          orderStatus: isBackorder
+            ? OrderStatus.BACKORDERED
+            : OrderStatus.PENDING,
+          paymentMethod: createOrderDto.paymentMethod,
+          paymentStatus: PaymentStatus.UNPAID,
+          subtotalAmount: subtotalAmount.toFixed(2),
+          discountAmount: discountAmount.toFixed(2),
+          deliveryCost: deliveryCost.toFixed(2),
+          totalPayment: totalPayment.toFixed(2),
+          totalQuantity,
+          note: createOrderDto.note ?? null,
+          fullName: shippingAddress.recipientName,
+          phone: shippingAddress.phone,
+          address: addressSnapshot,
+          idempotencyKey: idempotencyKey ?? null,
         });
-        await transactionalCouponUsageRepository.save(couponUsage);
-      }
 
-      const history = transactionalHistoryRepository.create({
-        orderId,
-        oldStatus: null,
-        newStatus: OrderStatus.PENDING,
-        changedBy: userId,
-        note: 'Order created',
-      });
-      await transactionalHistoryRepository.save(history);
+        await transactionalOrdersRepository.save(order);
 
-      await transactionalCartItemsRepository.delete({ cartId: cart.cartId });
-    });
+        for (const cartItem of cartItems) {
+          // Lock row pessimistic — block các request khác đọc cùng product trong khi check + trừ stock
+          const product = await transactionalProductsRepository.findOne({
+            where: { productId: cartItem.productId },
+            lock: { mode: 'pessimistic_write' },
+          });
+          if (!product || !product.isShow) {
+            throw new BadRequestException(
+              'One or more products are unavailable',
+            );
+          }
+          const variantSnapshot = cartItem.variantId ? cartVariantsById.get(cartItem.variantId) : null;
+          const variant = cartItem.variantId
+            ? await transactionalVariantsRepository.findOne({
+                where: { variantId: cartItem.variantId, productId: cartItem.productId },
+                lock: { mode: 'pessimistic_write' },
+              })
+            : null;
+          if (cartItem.variantId && (!variant || !variant.isActive)) {
+            throw new BadRequestException('Bien the san pham khong kha dung');
+          }
+          const availableQuantity = variant?.stockQuantity ?? product.quantityAvailable;
+          const isLineBackorder =
+            cartItem.quantity > availableQuantity;
+          if (isLineBackorder && !createOrderDto.allowBackorder) {
+            throw new BadRequestException(
+              `Sản phẩm ${product.productName} không đủ tồn kho`,
+            );
+          }
+
+          const lineTotal = Number(cartItem.priceAtAdded) * cartItem.quantity;
+
+          const orderItem = transactionalOrderItemsRepository.create({
+            orderId,
+            productId: cartItem.productId,
+            variantId: variant?.variantId ?? null,
+            productName: product.productName,
+            sku: variant?.sku ?? null,
+            colorName: variantSnapshot?.colorName ?? null,
+            sizeName: variantSnapshot?.sizeName ?? null,
+            quantity: cartItem.quantity,
+            unitPrice: cartItem.priceAtAdded,
+            lineTotal: lineTotal.toFixed(2),
+          });
+          await transactionalOrderItemsRepository.save(orderItem);
+
+          // Backorder line: KHÔNG trừ stock, KHÔNG ghi inventory transaction
+          // (sẽ xử lý sau khi nhập hàng về và admin fulfill)
+          if (isLineBackorder) {
+            continue;
+          }
+
+          const qtyBefore = variant?.stockQuantity ?? product.quantityAvailable;
+          if (variant) {
+            variant.stockQuantity -= cartItem.quantity;
+            await transactionalVariantsRepository.save(variant);
+          }
+          product.quantityAvailable -= cartItem.quantity;
+          product.quantityReserved =
+            (product.quantityReserved ?? 0) + cartItem.quantity;
+          await transactionalProductsRepository.save(product);
+
+          const inventoryTransaction =
+            transactionalInventoryTransactionsRepository.create({
+              productId: product.productId,
+              performedBy: userId,
+              transactionType: InventoryTransactionType.EXPORT,
+              quantityChange: -cartItem.quantity,
+              quantityBefore: qtyBefore,
+              quantityAfter: variant?.stockQuantity ?? product.quantityAvailable,
+              variantId: variant?.variantId ?? null,
+              referenceType: 'ORDER',
+              referenceId: orderId,
+              unitCostAtTime: product.avgCost ?? null,
+              note: 'Export by order checkout',
+              relatedOrderId: orderId,
+            });
+          await transactionalInventoryTransactionsRepository.save(
+            inventoryTransaction,
+          );
+
+          await this.syncDefaultWarehouseStock(
+            entityManager,
+            product.productId,
+            -cartItem.quantity,
+          );
+        }
+
+        if (discount) {
+          discount.usedCount += 1;
+          await transactionalDiscountsRepository.save(discount);
+
+          const couponUsage = transactionalCouponUsageRepository.create({
+            discountId: discount.discountId,
+            userId,
+            orderId,
+          });
+          await transactionalCouponUsageRepository.save(couponUsage);
+        }
+
+        const history = transactionalHistoryRepository.create({
+          orderId,
+          oldStatus: null,
+          newStatus: isBackorder
+            ? OrderStatus.BACKORDERED
+            : OrderStatus.PENDING,
+          changedBy: userId,
+          note: isBackorder
+            ? 'Order created (backordered — chờ nhập kho)'
+            : 'Order created',
+        });
+        await transactionalHistoryRepository.save(history);
+
+        await transactionalCartItemsRepository.delete({ cartId: cart.cartId });
+      }),
+    );
 
     const createdOrder = await this.findOwnedOrder(userId, orderId);
     await this.notificationsService.sendOrderCreatedNotification(
       userId,
       orderId,
     );
+    await this.notifyAdminsAboutNewOrder(createdOrder);
     return this.buildOrderDetail(createdOrder);
   }
 
@@ -636,11 +1278,76 @@ export class OrdersService {
 
   async findOrderDetail(currentUser: IUser, orderId: string) {
     await this.ensureUserExists(currentUser._id);
-    const order = this.hasManageOrdersPermission(currentUser)
-      ? await this.findAnyOrder(orderId)
-      : await this.findOwnedOrder(currentUser._id, orderId);
+    const order = await this.findAccessibleOrder(currentUser, orderId);
 
     return this.buildOrderDetail(order);
+  }
+
+  async findOrderTracking(currentUser: IUser, orderId: string) {
+    await this.ensureUserExists(currentUser._id);
+    const order = await this.findAccessibleOrder(currentUser, orderId);
+    const tracking = await this.findOrCreateOrderTracking(order.orderId);
+
+    return this.mapOrderTracking(tracking);
+  }
+
+  async updateOrderTrackingMode(
+    currentUser: IUser,
+    orderId: string,
+    updateOrderTrackingModeDto: UpdateOrderTrackingModeDto,
+  ) {
+    await this.ensureUserExists(currentUser._id);
+    const order = await this.findAnyOrder(orderId);
+    const tracking = await this.findOrCreateOrderTracking(order.orderId);
+
+    tracking.mode = updateOrderTrackingModeDto.mode;
+    const saved = await this.orderTrackingRepository.save(tracking);
+    return this.mapOrderTracking(saved);
+  }
+
+  async updateManualOrderTracking(
+    currentUser: IUser,
+    orderId: string,
+    updateOrderTrackingManualDto: UpdateOrderTrackingManualDto,
+  ) {
+    await this.ensureUserExists(currentUser._id);
+    const order = await this.findAnyOrder(orderId);
+    const tracking = await this.findOrCreateOrderTracking(order.orderId);
+
+    tracking.manualLatitude = updateOrderTrackingManualDto.latitude.toFixed(7);
+    tracking.manualLongitude = updateOrderTrackingManualDto.longitude.toFixed(7);
+    tracking.manualNote = updateOrderTrackingManualDto.note?.trim() || null;
+    tracking.manualUpdatedBy = currentUser._id;
+    tracking.manualUpdatedAt = new Date();
+
+    const saved = await this.orderTrackingRepository.save(tracking);
+    return this.mapOrderTracking(saved);
+  }
+
+  async updateLiveOrderTracking(
+    currentUser: IUser,
+    orderId: string,
+    updateOrderTrackingLiveDto: UpdateOrderTrackingLiveDto,
+  ) {
+    await this.ensureUserExists(currentUser._id);
+    const order = await this.findAnyOrder(orderId);
+    const tracking = await this.findOrCreateOrderTracking(order.orderId);
+
+    tracking.gpsLatitude = updateOrderTrackingLiveDto.latitude.toFixed(7);
+    tracking.gpsLongitude = updateOrderTrackingLiveDto.longitude.toFixed(7);
+    tracking.gpsHeading =
+      updateOrderTrackingLiveDto.heading !== undefined
+        ? updateOrderTrackingLiveDto.heading.toFixed(2)
+        : null;
+    tracking.gpsSpeedKph =
+      updateOrderTrackingLiveDto.speedKph !== undefined
+        ? updateOrderTrackingLiveDto.speedKph.toFixed(2)
+        : null;
+    tracking.gpsProvider = updateOrderTrackingLiveDto.provider?.trim() || null;
+    tracking.gpsUpdatedAt = new Date();
+
+    const saved = await this.orderTrackingRepository.save(tracking);
+    return this.mapOrderTracking(saved);
   }
 
   async cancelOrder(userId: string, orderId: string) {
@@ -678,15 +1385,26 @@ export class OrdersService {
         order.orderId,
         transactionalProductsRepository,
         transactionalOrderItemsRepository,
+        entityManager,
       );
 
       for (const item of items) {
+        const product = await transactionalProductsRepository.findOneBy({
+          productId: item.productId,
+        });
         const inventoryTransaction =
           transactionalInventoryTransactionsRepository.create({
             productId: item.productId,
             performedBy: userId,
             transactionType: InventoryTransactionType.RETURN_IN,
             quantityChange: item.quantity,
+            quantityBefore: product
+              ? product.quantityAvailable - item.quantity
+              : null,
+            quantityAfter: product ? product.quantityAvailable : null,
+            referenceType: 'ORDER',
+            referenceId: order.orderId,
+            unitCostAtTime: product?.avgCost ?? null,
             note: 'Restock by order cancellation',
             relatedOrderId: order.orderId,
           });
@@ -738,7 +1456,12 @@ export class OrdersService {
     }
 
     if (
-      [OrderStatus.DELIVERED, OrderStatus.RETURNED].includes(previousStatus)
+      [
+        OrderStatus.DELIVERED,
+        OrderStatus.PARTIAL_DELIVERED,
+        OrderStatus.RETURNED,
+      ].includes(previousStatus) &&
+      nextStatus !== OrderStatus.RETURNED
     ) {
       throw new BadRequestException('Finalized order cannot change status');
     }
@@ -768,56 +1491,177 @@ export class OrdersService {
       const transactionalCouponUsageRepository =
         entityManager.getRepository(CouponUsageEntity);
 
+      // BACKORDERED → PENDING: fulfill backorder, trừ stock chính thức
       if (
-        nextStatus === OrderStatus.CANCELLED ||
-        nextStatus === OrderStatus.RETURNED
+        previousStatus === OrderStatus.BACKORDERED &&
+        nextStatus === OrderStatus.PENDING
       ) {
         const items = await transactionalOrderItemsRepository.find({
           where: { orderId: order.orderId },
         });
-
-        await this.restockOrderItems(
-          order.orderId,
-          transactionalProductsRepository,
-          transactionalOrderItemsRepository,
-        );
-
         for (const item of items) {
-          const inventoryTransaction =
-            transactionalInventoryTransactionsRepository.create({
-              productId: item.productId,
-              performedBy: currentUser._id,
-              transactionType: InventoryTransactionType.RETURN_IN,
-              quantityChange: item.quantity,
-              note:
-                nextStatus === OrderStatus.CANCELLED
-                  ? 'Restock by admin cancellation'
-                  : 'Restock by returned order',
-              relatedOrderId: order.orderId,
-            });
-          await transactionalInventoryTransactionsRepository.save(
-            inventoryTransaction,
+          const product = await transactionalProductsRepository.findOne({
+            where: { productId: item.productId },
+            lock: { mode: 'pessimistic_write' },
+          });
+          if (!product) {
+            throw new BadRequestException(
+              `Sản phẩm trong đơn không còn tồn tại`,
+            );
+          }
+          if (item.quantity > product.quantityAvailable) {
+            throw new BadRequestException(
+              `Sản phẩm ${product.productName} vẫn chưa đủ tồn kho để fulfill`,
+            );
+          }
+          const qtyBefore = product.quantityAvailable;
+          product.quantityAvailable -= item.quantity;
+          product.quantityReserved =
+            (product.quantityReserved ?? 0) + item.quantity;
+          await transactionalProductsRepository.save(product);
+
+          const tx = transactionalInventoryTransactionsRepository.create({
+            productId: item.productId,
+            performedBy: currentUser._id,
+            transactionType: InventoryTransactionType.EXPORT,
+            quantityChange: -item.quantity,
+            quantityBefore: qtyBefore,
+            quantityAfter: product.quantityAvailable,
+            referenceType: 'ORDER',
+            referenceId: order.orderId,
+            unitCostAtTime: product.avgCost ?? null,
+            note: 'Export by backorder fulfillment',
+            relatedOrderId: order.orderId,
+          });
+          await transactionalInventoryTransactionsRepository.save(tx);
+          await this.syncDefaultWarehouseStock(
+            entityManager,
+            item.productId,
+            -item.quantity,
           );
         }
+      }
 
-        if (nextStatus === OrderStatus.CANCELLED) {
+      if (
+        nextStatus === OrderStatus.CANCELLED ||
+        nextStatus === OrderStatus.RETURNED
+      ) {
+        // Backorder bị cancel: KHÔNG restock vì chưa từng trừ stock
+        const isBackorderCancel =
+          previousStatus === OrderStatus.BACKORDERED &&
+          nextStatus === OrderStatus.CANCELLED;
+
+        if (isBackorderCancel) {
           await this.revertDiscountUsage(
             order,
             transactionalDiscountsRepository,
             transactionalCouponUsageRepository,
           );
+          order.orderStatus = nextStatus;
+          await transactionalOrdersRepository.save(order);
+          const history = transactionalHistoryRepository.create({
+            orderId: order.orderId,
+            oldStatus: previousStatus,
+            newStatus: nextStatus,
+            changedBy: currentUser._id,
+            note: updateOrderStatusDto.note ?? 'Backorder cancelled',
+          });
+          await transactionalHistoryRepository.save(history);
+          return;
         }
+
+        const items = await transactionalOrderItemsRepository.find({
+          where: { orderId: order.orderId },
+        });
+
+        // RETURNED: KHÔNG tự restock, chỉ giải phóng reserved (nếu chưa giao)
+        // → Hàng phải qua inspection trước. Stock chỉ được restock khi
+        //   admin inspect = USABLE.
+        // CANCELLED: vẫn restock bình thường (hàng chưa rời kho).
+        if (nextStatus === OrderStatus.CANCELLED) {
+          await this.restockOrderItems(
+            order.orderId,
+            transactionalProductsRepository,
+            transactionalOrderItemsRepository,
+            entityManager,
+          );
+          for (const item of items) {
+            const product = await transactionalProductsRepository.findOneBy({
+              productId: item.productId,
+            });
+            const inventoryTransaction =
+              transactionalInventoryTransactionsRepository.create({
+                productId: item.productId,
+                performedBy: currentUser._id,
+                transactionType: InventoryTransactionType.RETURN_IN,
+                quantityChange: item.quantity,
+                quantityBefore: product
+                  ? product.quantityAvailable - item.quantity
+                  : null,
+                quantityAfter: product ? product.quantityAvailable : null,
+                referenceType: 'ORDER',
+                referenceId: order.orderId,
+                unitCostAtTime: product?.avgCost ?? null,
+                note: 'Restock by admin cancellation',
+                relatedOrderId: order.orderId,
+              });
+            await transactionalInventoryTransactionsRepository.save(
+              inventoryTransaction,
+            );
+          }
+          await this.revertDiscountUsage(
+            order,
+            transactionalDiscountsRepository,
+            transactionalCouponUsageRepository,
+          );
+        } else if (nextStatus === OrderStatus.RETURNED) {
+          // Hàng trả về — giải phóng quantityReserved nếu có (đơn chưa DELIVERED)
+          // Stock physical KHÔNG cộng lại — chờ inspect.
+          // Nếu đơn đã DELIVERED rồi: reserved = 0, không có gì để release.
+          for (const item of items) {
+            const product = await transactionalProductsRepository.findOne({
+              where: { productId: item.productId },
+              lock: { mode: 'pessimistic_write' },
+            });
+            if (!product) continue;
+
+            // Tạo Return record với inspectionStatus = PENDING
+            const returnRecord = entityManager
+              .getRepository(ReturnEntity)
+              .create({
+                orderId: order.orderId,
+                orderItemId: item.orderItemId,
+                userId: order.userId,
+                reason:
+                  updateOrderStatusDto.note ?? 'Returned by admin',
+                description: null,
+                returnStatus: ReturnStatus.RECEIVED,
+                inspectionStatus: ReturnInspectionStatus.PENDING,
+                refundAmount: null,
+              });
+            await entityManager
+              .getRepository(ReturnEntity)
+              .save(returnRecord);
+          }
+        }
+      }
+
+      // Khi DELIVERED: giải phóng reserved (hàng đã rời kho thật sự)
+      if (nextStatus === OrderStatus.DELIVERED) {
+        await this.releaseReservedOnDelivered(
+          order.orderId,
+          transactionalProductsRepository,
+          transactionalOrderItemsRepository,
+        );
       }
 
       order.orderStatus = nextStatus;
 
-      if (
-        nextStatus === OrderStatus.CONFIRMED &&
-        order.paymentMethod !== PaymentMethod.COD
-      ) {
-        order.paymentStatus = PaymentStatus.PAID;
-      }
-
+      // Payment status logic:
+      // - COD + DELIVERED → PAID (khách trả tiền khi nhận hàng)
+      // - Online (non-COD) khi CONFIRMED: KHÔNG tự đặt PAID nữa.
+      //   Phải có PaymentTransaction từ gateway hoặc admin xác nhận thủ công.
+      //   (giữ nguyên paymentStatus hiện tại — thường là UNPAID)
       if (
         nextStatus === OrderStatus.DELIVERED &&
         order.paymentMethod === PaymentMethod.COD
@@ -894,15 +1738,219 @@ export class OrdersService {
 
     await this.paymentTransactionsRepository.save(paymentTransaction);
 
+    // Sentinel value — frontend detects this and shows simulation modal
+    let paymentUrl = `https://payment-gateway.local?provider=${order.paymentMethod}&transactionRef=${transactionRef}&orderId=${orderId}`;
+
+    if (order.paymentMethod === PaymentMethod.MOMO) {
+      const momoUrl = await this.buildMomoPaymentUrl(
+        orderId,
+        transactionRef,
+        Math.round(Number(order.totalPayment)),
+        initiatePaymentDto.returnUrl ?? `${process.env.FRONTEND_URL ?? 'http://localhost:5173'}/client/payment`,
+      ).catch((err: unknown) => {
+        console.error('[MoMo] buildMomoPaymentUrl error:', err);
+        return null;
+      });
+      if (momoUrl) {
+        paymentUrl = momoUrl;
+      } else {
+        console.warn('[MoMo] Không lấy được paymentUrl — kiểm tra credentials và BACKEND_URL trong .env');
+      }
+    }
+
     return {
       orderId,
       provider: order.paymentMethod,
       transactionRef,
-      paymentUrl: `${
-        initiatePaymentDto.returnUrl ?? 'https://payment-gateway.local'
-      }?provider=${order.paymentMethod}&transactionRef=${transactionRef}&orderId=${orderId}`,
+      paymentUrl,
       expiresAt: new Date(Date.now() + 15 * 60 * 1000),
     };
+  }
+
+  private async buildMomoPaymentUrl(
+    internalOrderId: string,
+    requestId: string,
+    amount: number,
+    redirectUrl: string,
+  ): Promise<string | null> {
+    const { partnerCode, accessKey, secretKey } =
+      await this.settingsService.getMomoConfig();
+
+    if (!partnerCode || !accessKey || !secretKey) return null;
+
+    // Use requestId as MoMo orderId to guarantee uniqueness per request
+    const momoOrderId = requestId;
+    const ipnUrl = `${process.env.BACKEND_URL ?? 'http://localhost:8000'}/api/v1/payments/momo/ipn`;
+    const orderInfo = `Thanh toan don hang ${internalOrderId}`;
+    const requestType = 'payWithMethod';
+    const extraData = '';
+    const lang = 'vi';
+
+    const rawSignature = [
+      `accessKey=${accessKey}`,
+      `amount=${amount}`,
+      `extraData=${extraData}`,
+      `ipnUrl=${ipnUrl}`,
+      `orderId=${momoOrderId}`,
+      `orderInfo=${orderInfo}`,
+      `partnerCode=${partnerCode}`,
+      `redirectUrl=${redirectUrl}`,
+      `requestId=${requestId}`,
+      `requestType=${requestType}`,
+    ].join('&');
+
+    const signature = createHmac('sha256', secretKey).update(rawSignature).digest('hex');
+
+    const body = {
+      partnerCode,
+      accessKey,
+      requestId,
+      amount,
+      orderId: momoOrderId,
+      orderInfo,
+      redirectUrl,
+      ipnUrl,
+      requestType,
+      extraData,
+      lang,
+      signature,
+    };
+
+    // Use sandbox endpoint when partner code is the MoMo test value
+    const isSandbox = partnerCode === 'MOMO' || process.env.MOMO_SANDBOX === 'true';
+    const endpoint = isSandbox
+      ? 'https://test-payment.momo.vn/v2/gateway/api/create'
+      : 'https://payment.momo.vn/v2/gateway/api/create';
+
+    console.log(`[MoMo] Calling ${isSandbox ? 'SANDBOX' : 'PRODUCTION'} endpoint`);
+    console.log('[MoMo] orderId:', momoOrderId, '| amount:', amount, '| ipnUrl:', ipnUrl);
+
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    const data = (await response.json()) as { resultCode?: number; payUrl?: string; message?: string };
+    console.log('[MoMo] Response:', JSON.stringify(data));
+    if (data.resultCode === 0 && data.payUrl) return data.payUrl;
+    console.error(`[MoMo] resultCode=${data.resultCode ?? 'N/A'} message=${data.message ?? 'N/A'}`);
+    return null;
+  }
+
+  async handleMomoIpn(body: Record<string, unknown>) {
+    const { accessKey, secretKey } = await this.settingsService.getMomoConfig();
+    if (!secretKey || !accessKey) return { message: 'ignored' };
+
+    // 1. VERIFY HMAC SIGNATURE — chống fake callback
+    if (!verifyMomoSignature(body, accessKey, secretKey)) {
+      throw new UnauthorizedException('Invalid MoMo signature');
+    }
+
+    const {
+      orderId: momoOrderId,
+      requestId,
+      amount,
+      resultCode,
+      transId,
+      message: gwMessage,
+    } = body as {
+      orderId?: string;
+      requestId?: string;
+      amount?: number;
+      resultCode?: number;
+      transId?: string;
+      message?: string;
+    };
+
+    // momoOrderId = transactionRef (requestId) — look up the real order via transactions table
+    const txRef = momoOrderId ?? requestId;
+    if (!txRef) return { message: 'missing orderId' };
+
+    const transaction = await this.paymentTransactionsRepository
+      .findOne({ where: { transactionRef: txRef } })
+      .catch(() => null);
+
+    const internalOrderId = transaction?.orderId;
+    if (!internalOrderId) return { message: 'transaction not found' };
+
+    const order = await this.ordersRepository
+      .findOneBy({ orderId: internalOrderId })
+      .catch(() => null);
+    if (!order) return { message: 'order not found' };
+
+    // 2. IDEMPOTENCY — Nếu đã xử lý transId này thành SUCCESS rồi thì return luôn
+    if (
+      transaction &&
+      transaction.transactionStatus === PaymentTransactionStatus.SUCCESS &&
+      transaction.gatewayCode === String(resultCode ?? '')
+    ) {
+      return { message: 'already processed', transId };
+    }
+
+    // 3. AMOUNT MISMATCH GUARD — Tránh fake amount nhỏ
+    if (amount !== undefined && amount !== null) {
+      const expectedAmount = Number(order.totalPayment);
+      const reportedAmount = Number(amount);
+      if (
+        Number.isFinite(expectedAmount) &&
+        Number.isFinite(reportedAmount) &&
+        Math.abs(expectedAmount - reportedAmount) > 0.01
+      ) {
+        // Lưu transaction là FAILED do amount mismatch — không update order
+        if (transaction) {
+          transaction.transactionStatus = PaymentTransactionStatus.FAILED;
+          transaction.gatewayCode = 'AMOUNT_MISMATCH';
+          transaction.gatewayMessage = `Expected ${expectedAmount}, got ${reportedAmount}`;
+          transaction.rawPayload = body;
+          await this.paymentTransactionsRepository.save(transaction);
+        }
+        throw new BadRequestException('Payment amount mismatch');
+      }
+    }
+
+    const success = resultCode === 0;
+    const paymentStatus = success ? PaymentStatus.PAID : PaymentStatus.FAILED;
+
+    // Update existing transaction status if found, or create a new one
+    if (transaction) {
+      transaction.transactionStatus = success
+        ? PaymentTransactionStatus.SUCCESS
+        : PaymentTransactionStatus.FAILED;
+      transaction.paymentStatus = paymentStatus;
+      transaction.gatewayCode = String(resultCode ?? '');
+      transaction.gatewayMessage = (gwMessage as string) ?? null;
+      transaction.rawPayload = body;
+      await this.paymentTransactionsRepository.save(transaction);
+    } else {
+      const newTx = this.paymentTransactionsRepository.create({
+        orderId: internalOrderId,
+        userId: order.userId,
+        provider: PaymentMethod.MOMO,
+        transactionRef: txRef,
+        transactionStatus: success
+          ? PaymentTransactionStatus.SUCCESS
+          : PaymentTransactionStatus.FAILED,
+        paymentStatus,
+        amount: String(amount ?? order.totalPayment),
+        gatewayCode: String(resultCode ?? ''),
+        gatewayMessage: (gwMessage as string) ?? null,
+        rawPayload: body,
+      });
+      await this.paymentTransactionsRepository.save(newTx);
+    }
+
+    order.paymentStatus = paymentStatus;
+    await this.ordersRepository.save(order);
+
+    await this.notificationsService.sendPaymentNotification(
+      order.userId,
+      internalOrderId,
+      paymentStatus,
+      PaymentMethod.MOMO,
+    );
+
+    return { message: 'ok', transId };
   }
 
   async handlePaymentCallback(
@@ -916,26 +1964,69 @@ export class OrdersService {
       throw new BadRequestException('Payment provider does not match order');
     }
 
+    // 1. IDEMPOTENCY — Tránh xử lý lại cùng transactionRef
+    const existingTx = await this.paymentTransactionsRepository.findOne({
+      where: { transactionRef: paymentCallbackDto.transactionRef },
+    });
+    if (
+      existingTx &&
+      existingTx.transactionStatus === PaymentTransactionStatus.SUCCESS &&
+      paymentCallbackDto.success
+    ) {
+      return {
+        orderId: order.orderId,
+        provider: normalizedProvider,
+        transactionRef: paymentCallbackDto.transactionRef,
+        paymentStatus: existingTx.paymentStatus,
+        message: 'already processed',
+      };
+    }
+
+    // 2. AMOUNT MISMATCH GUARD — Không cho fake amount nhỏ hơn
+    if (paymentCallbackDto.success) {
+      const expectedAmount = Number(order.totalPayment);
+      const reportedAmount = Number(paymentCallbackDto.amount);
+      if (
+        Number.isFinite(expectedAmount) &&
+        Number.isFinite(reportedAmount) &&
+        Math.abs(expectedAmount - reportedAmount) > 0.01
+      ) {
+        throw new BadRequestException(
+          `Payment amount mismatch: expected ${expectedAmount}, got ${reportedAmount}`,
+        );
+      }
+    }
+
     const paymentStatus = paymentCallbackDto.success
       ? PaymentStatus.PAID
       : PaymentStatus.FAILED;
 
-    const transaction = this.paymentTransactionsRepository.create({
-      orderId: order.orderId,
-      userId: order.userId,
-      provider: normalizedProvider,
-      transactionRef: paymentCallbackDto.transactionRef,
-      transactionStatus: paymentCallbackDto.success
+    if (existingTx) {
+      existingTx.transactionStatus = paymentCallbackDto.success
         ? PaymentTransactionStatus.SUCCESS
-        : PaymentTransactionStatus.FAILED,
-      paymentStatus,
-      amount: paymentCallbackDto.amount,
-      gatewayCode: paymentCallbackDto.gatewayCode ?? null,
-      gatewayMessage: paymentCallbackDto.gatewayMessage ?? null,
-      rawPayload: paymentCallbackDto.rawPayload ?? null,
-    });
-
-    await this.paymentTransactionsRepository.save(transaction);
+        : PaymentTransactionStatus.FAILED;
+      existingTx.paymentStatus = paymentStatus;
+      existingTx.gatewayCode = paymentCallbackDto.gatewayCode ?? null;
+      existingTx.gatewayMessage = paymentCallbackDto.gatewayMessage ?? null;
+      existingTx.rawPayload = paymentCallbackDto.rawPayload ?? null;
+      await this.paymentTransactionsRepository.save(existingTx);
+    } else {
+      const transaction = this.paymentTransactionsRepository.create({
+        orderId: order.orderId,
+        userId: order.userId,
+        provider: normalizedProvider,
+        transactionRef: paymentCallbackDto.transactionRef,
+        transactionStatus: paymentCallbackDto.success
+          ? PaymentTransactionStatus.SUCCESS
+          : PaymentTransactionStatus.FAILED,
+        paymentStatus,
+        amount: paymentCallbackDto.amount,
+        gatewayCode: paymentCallbackDto.gatewayCode ?? null,
+        gatewayMessage: paymentCallbackDto.gatewayMessage ?? null,
+        rawPayload: paymentCallbackDto.rawPayload ?? null,
+      });
+      await this.paymentTransactionsRepository.save(transaction);
+    }
 
     order.paymentStatus = paymentStatus;
     await this.ordersRepository.save(order);
@@ -952,6 +2043,121 @@ export class OrdersService {
       transactionRef: paymentCallbackDto.transactionRef,
       paymentStatus,
     };
+  }
+
+  /**
+   * Cron reconciliation — chạy mỗi 15 phút.
+   * Tìm các đơn online (non-COD) đã PENDING + paymentStatus=UNPAID quá 30 phút
+   * → Đối soát với gateway hoặc tự cancel để giải phóng stock.
+   *
+   * Hiện tại: KHÔNG gọi MoMo query API thật (cần endpoint /v2/gateway/api/query
+   * + signature) — sẽ AUTO CANCEL đơn nếu quá 30 phút không thanh toán.
+   * Stock sẽ được restock thông qua updateOrderStatus → CANCELLED.
+   */
+  @Cron('*/15 * * * *') // mỗi 15 phút
+  async reconcileStalePayments() {
+    try {
+      const cutoff = new Date(Date.now() - this.stalePaymentTtlMs);
+      const stale = await this.ordersRepository.find({
+        where: {
+          orderStatus: OrderStatus.PENDING,
+          paymentStatus: PaymentStatus.UNPAID,
+          paymentMethod: In([
+            PaymentMethod.MOMO,
+            PaymentMethod.VNPAY,
+            PaymentMethod.ZALOPAY,
+            PaymentMethod.BANK_TRANSFER,
+            PaymentMethod.PAYPAL,
+          ]),
+          createdAt: LessThan(cutoff),
+        },
+        take: 100, // batch nhỏ để tránh nghẽn DB
+      });
+
+      if (stale.length === 0) return;
+
+      this.logger.log(
+        `[reconcileStalePayments] Found ${stale.length} stale unpaid orders`,
+      );
+
+      for (const order of stale) {
+        try {
+          // Kiểm tra có PaymentTransaction SUCCESS chưa (case race condition)
+          const succeeded = await this.paymentTransactionsRepository.findOne({
+            where: {
+              orderId: order.orderId,
+              transactionStatus: PaymentTransactionStatus.SUCCESS,
+            },
+          });
+          if (succeeded) {
+            order.paymentStatus = PaymentStatus.PAID;
+            await this.ordersRepository.save(order);
+            continue;
+          }
+
+          // Auto-cancel + restock
+          await this.ordersRepository.manager.transaction(async (em) => {
+            const items = await em.find(OrderItemEntity, {
+              where: { orderId: order.orderId },
+            });
+            // Restock từng item
+            for (const item of items) {
+              const product = await em.findOne(ProductEntity, {
+                where: { productId: item.productId },
+                lock: { mode: 'pessimistic_write' },
+              });
+              if (product) {
+                product.quantityAvailable += item.quantity;
+                product.quantityReserved = Math.max(
+                  0,
+                  (product.quantityReserved ?? 0) - item.quantity,
+                );
+                await em.save(ProductEntity, product);
+              }
+              await em.save(
+                InventoryTransactionEntity,
+                em.create(InventoryTransactionEntity, {
+                  productId: item.productId,
+                  performedBy: null,
+                  transactionType: InventoryTransactionType.RETURN_IN,
+                  quantityChange: item.quantity,
+                  referenceType: 'ORDER',
+                  referenceId: order.orderId,
+                  note: 'Auto-cancel by reconciliation (unpaid > 30min)',
+                  relatedOrderId: order.orderId,
+                }),
+              );
+            }
+            order.orderStatus = OrderStatus.CANCELLED;
+            order.paymentStatus = PaymentStatus.FAILED;
+            await em.save(OrderEntity, order);
+            await em.save(
+              OrderStatusHistoryEntity,
+              em.create(OrderStatusHistoryEntity, {
+                orderId: order.orderId,
+                oldStatus: OrderStatus.PENDING,
+                newStatus: OrderStatus.CANCELLED,
+                changedBy: null,
+                note: 'Auto-cancelled by reconciliation cron (unpaid > 30 min)',
+              }),
+            );
+          });
+          this.logger.log(
+            `[reconcileStalePayments] Cancelled order ${order.orderId}`,
+          );
+        } catch (err) {
+          this.logger.error(
+            `[reconcileStalePayments] Failed for order ${order.orderId}`,
+            err instanceof Error ? err.stack : String(err),
+          );
+        }
+      }
+    } catch (err) {
+      this.logger.error(
+        '[reconcileStalePayments] Top-level error',
+        err instanceof Error ? err.stack : String(err),
+      );
+    }
   }
 
   async findPaymentTransactions(currentUser: IUser, orderId: string) {
@@ -979,6 +2185,50 @@ export class OrdersService {
       createdAt: item.createdAt,
       updatedAt: item.updatedAt,
     }));
+  }
+
+  async findAllPaymentTransactions(params: {
+    page: number;
+    limit: number;
+    provider?: string;
+    status?: string;
+  }) {
+    const { page, limit, provider, status } = params;
+    const skip = (page - 1) * limit;
+
+    const query = this.paymentTransactionsRepository.createQueryBuilder('pt');
+    if (provider) query.andWhere('pt.provider = :provider', { provider });
+    if (status) query.andWhere('pt.transactionStatus = :status', { status });
+    query.orderBy('pt.createdAt', 'DESC').skip(skip).take(limit);
+
+    const [items, total] = await query.getManyAndCount();
+
+    // Fetch user info in bulk
+    const userIds = [...new Set(items.map((i) => i.userId))];
+    const users = userIds.length > 0
+      ? await this.usersRepository.createQueryBuilder('u').select(['u.userId', 'u.username', 'u.email']).whereInIds(userIds).getMany()
+      : [];
+    const userMap = new Map(users.map((u) => [u.userId, u]));
+
+    return {
+      meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
+      items: items.map((i) => ({
+        id: i.paymentTransactionId,
+        orderId: i.orderId,
+        provider: i.provider,
+        transactionRef: i.transactionRef,
+        transactionStatus: i.transactionStatus,
+        paymentStatus: i.paymentStatus,
+        amount: i.amount,
+        gatewayCode: i.gatewayCode,
+        gatewayMessage: i.gatewayMessage,
+        createdAt: i.createdAt,
+        user: userMap.get(i.userId) ? {
+          username: userMap.get(i.userId)!.username,
+          email: userMap.get(i.userId)!.email,
+        } : null,
+      })),
+    };
   }
 
   async createReturn(userId: string, createReturnDto: CreateReturnDto) {
@@ -1094,24 +2344,10 @@ export class OrdersService {
     }
 
     if (updateReturnStatusDto.status === ReturnStatus.RECEIVED) {
-      const product = await this.productsRepository.findOneBy({
-        productId: orderItem.productId,
-      });
-      if (product) {
-        product.quantityAvailable += orderItem.quantity;
-        await this.productsRepository.save(product);
-
-        const inventoryTransaction =
-          this.inventoryTransactionsRepository.create({
-            productId: product.productId,
-            performedBy: currentUser._id,
-            transactionType: InventoryTransactionType.RETURN_IN,
-            quantityChange: orderItem.quantity,
-            note: updateReturnStatusDto.note ?? 'Return received by admin',
-            relatedOrderId: returnRequest.orderId,
-          });
-        await this.inventoryTransactionsRepository.save(inventoryTransaction);
-      }
+      // RECEIVED: chỉ đánh dấu đã nhận, KHÔNG tự restock.
+      // Hàng phải qua inspection (admin gọi PATCH /returns/:id/inspect)
+      // để quyết định nhập kho / báo hỏng / trả NCC.
+      returnRequest.inspectionStatus = ReturnInspectionStatus.PENDING;
     }
 
     returnRequest.returnStatus = updateReturnStatusDto.status;
@@ -1140,5 +2376,269 @@ export class OrdersService {
     });
 
     return savedReturn;
+  }
+
+  /**
+   * Admin xác nhận giao một phần (partial delivery).
+   * Khách mua 10 → giao thực tế 6 → các bước:
+   *   1. Cập nhật order_items.quantity_delivered cho từng line
+   *   2. Phần chưa giao (4 cái) → cộng lại quantityAvailable, giảm reserved
+   *   3. Tạo inventory_transaction RETURN_IN cho phần thiếu
+   *   4. Giảm reserved cho phần đã giao (như delivered bình thường)
+   *   5. Đặt status = PARTIAL_DELIVERED nếu còn thiếu, DELIVERED nếu đủ
+   *   6. Tính lại totalPayment theo phần đã giao thực tế
+   *
+   * Phải gọi từ status SHIPPING (chỉ giao được khi đang ship).
+   */
+  async partialDeliverOrder(
+    currentUser: IUser,
+    orderId: string,
+    items: { orderItemId: string; deliveredQty: number }[],
+    note?: string,
+  ) {
+    await this.ensureUserExists(currentUser._id);
+    const order = await this.findAnyOrder(orderId);
+
+    if (order.orderStatus !== OrderStatus.SHIPPING) {
+      throw new BadRequestException(
+        'Partial delivery chỉ thực hiện khi đơn đang SHIPPING',
+      );
+    }
+
+    const orderItems = await this.orderItemsRepository.find({
+      where: { orderId: order.orderId },
+    });
+    const itemMap = new Map(orderItems.map((it) => [it.orderItemId, it]));
+
+    // Validate: deliveredQty không được vượt qty đặt
+    for (const dto of items) {
+      const oi = itemMap.get(dto.orderItemId);
+      if (!oi) {
+        throw new BadRequestException(
+          `Order item ${dto.orderItemId} không thuộc đơn này`,
+        );
+      }
+      if (dto.deliveredQty > oi.quantity) {
+        throw new BadRequestException(
+          `Số lượng giao (${dto.deliveredQty}) không thể vượt số đặt (${oi.quantity}) của ${oi.productName}`,
+        );
+      }
+      if (dto.deliveredQty < 0) {
+        throw new BadRequestException('deliveredQty không được âm');
+      }
+    }
+
+    let totalDeliveredQty = 0;
+    let totalOrderedQty = 0;
+    let newSubtotal = 0;
+
+    await withDeadlockRetry(() =>
+      this.ordersRepository.manager.transaction(async (em) => {
+        for (const dto of items) {
+          const oi = itemMap.get(dto.orderItemId)!;
+          const undeliveredQty = oi.quantity - dto.deliveredQty;
+          totalDeliveredQty += dto.deliveredQty;
+          totalOrderedQty += oi.quantity;
+          newSubtotal += dto.deliveredQty * Number(oi.unitPrice);
+
+          oi.quantityDelivered = dto.deliveredQty;
+          await em.save(OrderItemEntity, oi);
+
+          // Phần đã giao: giảm reserved (hàng đã rời kho thật)
+          // Phần KHÔNG giao: cộng lại quantityAvailable + giảm reserved
+          if (oi.quantity > 0) {
+            const product = await em.findOne(ProductEntity, {
+              where: { productId: oi.productId },
+              lock: { mode: 'pessimistic_write' },
+            });
+            if (!product) continue;
+
+            const releaseReserved = oi.quantity; // toàn bộ qty của line
+            product.quantityReserved = Math.max(
+              0,
+              (product.quantityReserved ?? 0) - releaseReserved,
+            );
+            // Cộng lại phần thiếu vào available
+            if (undeliveredQty > 0) {
+              const qtyBefore = product.quantityAvailable;
+              product.quantityAvailable += undeliveredQty;
+              await em.save(ProductEntity, product);
+
+              await em.save(
+                InventoryTransactionEntity,
+                em.create(InventoryTransactionEntity, {
+                  productId: product.productId,
+                  performedBy: currentUser._id,
+                  transactionType: InventoryTransactionType.RETURN_IN,
+                  quantityChange: undeliveredQty,
+                  quantityBefore: qtyBefore,
+                  quantityAfter: product.quantityAvailable,
+                  referenceType: 'ORDER',
+                  referenceId: order.orderId,
+                  unitCostAtTime: product.avgCost ?? null,
+                  note: `Partial delivery: ${dto.deliveredQty}/${oi.quantity} delivered, ${undeliveredQty} restocked`,
+                  relatedOrderId: order.orderId,
+                }),
+              );
+              await this.syncDefaultWarehouseStock(
+                em,
+                product.productId,
+                undeliveredQty,
+              );
+            } else {
+              await em.save(ProductEntity, product);
+            }
+          }
+        }
+
+        // Cập nhật order: status + total
+        const isFullyDelivered = totalDeliveredQty === totalOrderedQty;
+        order.orderStatus = isFullyDelivered
+          ? OrderStatus.DELIVERED
+          : OrderStatus.PARTIAL_DELIVERED;
+        order.totalQuantity = totalDeliveredQty;
+        // Recalc totalPayment = subtotal mới - discount + delivery
+        const newTotalPayment =
+          newSubtotal -
+          Number(order.discountAmount) +
+          Number(order.deliveryCost);
+        order.subtotalAmount = newSubtotal.toFixed(2);
+        order.totalPayment = Math.max(0, newTotalPayment).toFixed(2);
+
+        // COD: chỉ PAID nếu giao đủ
+        if (
+          isFullyDelivered &&
+          order.paymentMethod === PaymentMethod.COD
+        ) {
+          order.paymentStatus = PaymentStatus.PAID;
+        }
+
+        await em.save(OrderEntity, order);
+        await em.save(
+          OrderStatusHistoryEntity,
+          em.create(OrderStatusHistoryEntity, {
+            orderId: order.orderId,
+            oldStatus: OrderStatus.SHIPPING,
+            newStatus: order.orderStatus,
+            changedBy: currentUser._id,
+            note:
+              note ??
+              `Partial delivery: ${totalDeliveredQty}/${totalOrderedQty}`,
+          }),
+        );
+      }),
+    );
+
+    await this.notificationsService.sendOrderStatusNotification(
+      order.userId,
+      order.orderId,
+      order.orderStatus,
+    );
+
+    return this.findAnyOrder(order.orderId);
+  }
+
+  /**
+   * Admin kiểm tra hàng trả về và quyết định:
+   *   USABLE             → nhập lại kho chính
+   *   DAMAGED            → ghi DAMAGE adjustment, KHÔNG nhập kho (loss)
+   *   RETURN_TO_SUPPLIER → đánh dấu để admin tạo Supplier Return riêng
+   *
+   * Chỉ chạy được khi return đã RECEIVED + inspectionStatus = PENDING.
+   */
+  async inspectReturn(
+    currentUser: IUser,
+    returnId: string,
+    decision: ReturnInspectionStatus,
+    note?: string,
+  ) {
+    await this.ensureUserExists(currentUser._id);
+    if (decision === ReturnInspectionStatus.PENDING) {
+      throw new BadRequestException('Decision không thể là PENDING');
+    }
+
+    const returnRequest = await this.returnsRepository.findOneBy({ returnId });
+    if (!returnRequest) {
+      throw new NotFoundException('Return request not found');
+    }
+    if (returnRequest.returnStatus !== ReturnStatus.RECEIVED) {
+      throw new BadRequestException(
+        'Chỉ có thể inspect return đã RECEIVED',
+      );
+    }
+    if (returnRequest.inspectionStatus !== ReturnInspectionStatus.PENDING) {
+      throw new BadRequestException(
+        `Return này đã được inspect (${returnRequest.inspectionStatus})`,
+      );
+    }
+
+    const orderItem = await this.orderItemsRepository.findOneBy({
+      orderItemId: returnRequest.orderItemId,
+    });
+    if (!orderItem) throw new NotFoundException('Order item not found');
+
+    await this.ordersRepository.manager.transaction(async (em) => {
+      const product = await em.findOne(ProductEntity, {
+        where: { productId: orderItem.productId },
+        lock: { mode: 'pessimistic_write' },
+      });
+
+      if (decision === ReturnInspectionStatus.USABLE && product) {
+        // Nhập lại kho chính
+        const qtyBefore = product.quantityAvailable;
+        product.quantityAvailable += orderItem.quantity;
+        await em.save(ProductEntity, product);
+
+        await em.save(
+          InventoryTransactionEntity,
+          em.create(InventoryTransactionEntity, {
+            productId: product.productId,
+            performedBy: currentUser._id,
+            transactionType: InventoryTransactionType.RETURN_IN,
+            quantityChange: orderItem.quantity,
+            quantityBefore: qtyBefore,
+            quantityAfter: product.quantityAvailable,
+            referenceType: 'RETURN',
+            referenceId: String(returnRequest.returnId),
+            unitCostAtTime: product.avgCost ?? null,
+            note: note ?? 'Return inspection: USABLE — restocked',
+            relatedOrderId: returnRequest.orderId,
+          }),
+        );
+        await this.syncDefaultWarehouseStock(
+          em,
+          product.productId,
+          orderItem.quantity,
+        );
+      } else if (decision === ReturnInspectionStatus.DAMAGED && product) {
+        // Hỏng — KHÔNG nhập kho. Ghi DAMAGE inventory_transaction (loss).
+        await em.save(
+          InventoryTransactionEntity,
+          em.create(InventoryTransactionEntity, {
+            productId: product.productId,
+            performedBy: currentUser._id,
+            transactionType: InventoryTransactionType.DAMAGE,
+            quantityChange: 0, // không thay đổi tồn (vì chưa nhập)
+            quantityBefore: product.quantityAvailable,
+            quantityAfter: product.quantityAvailable,
+            referenceType: 'RETURN',
+            referenceId: String(returnRequest.returnId),
+            unitCostAtTime: product.avgCost ?? null,
+            note: note ?? `Return inspection: DAMAGED — written off ${orderItem.quantity} unit(s)`,
+            relatedOrderId: returnRequest.orderId,
+          }),
+        );
+      }
+      // RETURN_TO_SUPPLIER: không động vào kho. Admin sẽ tạo Supplier Return riêng.
+
+      returnRequest.inspectionStatus = decision;
+      returnRequest.inspectionNote = note ?? null;
+      returnRequest.inspectedBy = currentUser._id;
+      returnRequest.inspectedAt = new Date();
+      returnRequest.returnStatus = ReturnStatus.INSPECTED;
+      await em.save(ReturnEntity, returnRequest);
+    });
+
+    return this.returnsRepository.findOneBy({ returnId });
   }
 }

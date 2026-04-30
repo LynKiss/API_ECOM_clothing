@@ -10,13 +10,18 @@ import { CategoryEntity } from '../categories/entities/category.entity';
 import { ProductEntity } from '../products/entities/product.entity';
 import { ApplyCouponDto } from './dto/apply-coupon.dto';
 import { CreateDiscountDto } from './dto/create-discount.dto';
+import { QueryAvailableCouponsDto } from './dto/query-available-coupons.dto';
 import { UpdateDiscountDto } from './dto/update-discount.dto';
 import { ValidateCouponDto } from './dto/validate-coupon.dto';
 import { CouponUsageEntity } from './entities/coupon-usage.entity';
 import { DiscountCategoryEntity } from './entities/discount-category.entity';
 import { DiscountProductEntity } from './entities/discount-product.entity';
+import { SavedVoucherEntity } from './entities/saved-voucher.entity';
 import {
+  DISCOUNT_APPROVAL_THRESHOLD_FIXED,
+  DISCOUNT_APPROVAL_THRESHOLD_PCT,
   DiscountApplyTarget,
+  DiscountApprovalStatus,
   DiscountEntity,
   DiscountType,
 } from './entities/discount.entity';
@@ -32,6 +37,8 @@ export class DiscountsService {
     private readonly discountProductsRepository: Repository<DiscountProductEntity>,
     @InjectRepository(CouponUsageEntity)
     private readonly couponUsageRepository: Repository<CouponUsageEntity>,
+    @InjectRepository(SavedVoucherEntity)
+    private readonly savedVoucherRepository: Repository<SavedVoucherEntity>,
     @InjectRepository(CategoryEntity)
     private readonly categoriesRepository: Repository<CategoryEntity>,
     @InjectRepository(ProductEntity)
@@ -87,6 +94,12 @@ export class DiscountsService {
     );
     await this.validateDiscountTargets(createDiscountDto);
 
+    // Approval logic: nếu giảm > 30% (PERCENT) hoặc > 1tr VND (FIXED) → cần duyệt
+    const needApproval = this.discountNeedsApproval(
+      createDiscountDto.discountType,
+      createDiscountDto.discountValue,
+    );
+
     const discount = this.discountsRepository.create({
       discountCode: this.normalizeDiscountCode(createDiscountDto.discountCode),
       discountName: createDiscountDto.discountName,
@@ -97,7 +110,11 @@ export class DiscountsService {
       userId: createDiscountDto.userId ?? null,
       discountDescription: createDiscountDto.discountDescription ?? null,
       discountValue: createDiscountDto.discountValue,
-      isActive: createDiscountDto.isActive ?? true,
+      // Nếu cần duyệt: tự động deactivate đến khi được duyệt
+      isActive: needApproval ? false : (createDiscountDto.isActive ?? true),
+      approvalStatus: needApproval
+        ? DiscountApprovalStatus.PENDING_APPROVAL
+        : DiscountApprovalStatus.NOT_REQUIRED,
       usageLimit: createDiscountDto.usageLimit ?? null,
       usedCount: 0,
       minOrderValue: createDiscountDto.minOrderValue ?? '0',
@@ -108,6 +125,60 @@ export class DiscountsService {
     await this.syncDiscountTargets(saved.discountId, createDiscountDto);
 
     return this.findOne(saved.discountId);
+  }
+
+  private discountNeedsApproval(type: DiscountType, value: string | number): boolean {
+    const v = Number(value);
+    if (type === DiscountType.PERCENT) return v > DISCOUNT_APPROVAL_THRESHOLD_PCT;
+    if (type === DiscountType.FIXED) return v > DISCOUNT_APPROVAL_THRESHOLD_FIXED;
+    return false;
+  }
+
+  /**
+   * Admin duyệt discount giảm sâu (cần permission manage_discounts).
+   * approvedBy: id của admin duyệt.
+   */
+  async approveDiscount(
+    discountId: string,
+    approvedBy: string,
+    note?: string,
+  ) {
+    const discount = await this.findOne(discountId);
+    if (discount.approvalStatus !== DiscountApprovalStatus.PENDING_APPROVAL) {
+      throw new BadRequestException(
+        'Chỉ có thể duyệt discount đang ở trạng thái PENDING_APPROVAL',
+      );
+    }
+    discount.approvalStatus = DiscountApprovalStatus.APPROVED;
+    discount.approvedBy = approvedBy;
+    discount.approvedAt = new Date();
+    discount.approvalNote = note ?? null;
+    discount.isActive = true; // tự active sau khi duyệt
+    await this.discountsRepository.save(discount);
+    return this.findOne(discountId);
+  }
+
+  /**
+   * Admin từ chối discount giảm sâu.
+   */
+  async rejectDiscount(
+    discountId: string,
+    rejectedBy: string,
+    note?: string,
+  ) {
+    const discount = await this.findOne(discountId);
+    if (discount.approvalStatus !== DiscountApprovalStatus.PENDING_APPROVAL) {
+      throw new BadRequestException(
+        'Chỉ có thể từ chối discount đang ở trạng thái PENDING_APPROVAL',
+      );
+    }
+    discount.approvalStatus = DiscountApprovalStatus.REJECTED;
+    discount.approvedBy = rejectedBy;
+    discount.approvedAt = new Date();
+    discount.approvalNote = note ?? null;
+    discount.isActive = false;
+    await this.discountsRepository.save(discount);
+    return this.findOne(discountId);
   }
 
   async update(discountId: string, updateDiscountDto: UpdateDiscountDto) {
@@ -217,20 +288,91 @@ export class DiscountsService {
           d.expireDate.getTime() >= now.getTime();
         const hasRemaining =
           d.usageLimit === null || d.usedCount < d.usageLimit;
-        return withinRange && hasRemaining;
+        const approvalOk = this.isDiscountApprovedForUse(d);
+        return withinRange && hasRemaining && d.userId === null && approvalOk;
       })
-      .map((d) => ({
-        id: d.discountId,
-        code: d.discountCode,
-        name: d.discountName,
-        description: d.discountDescription,
-        type: d.discountType,
-        value: d.discountValue,
-        minOrderValue: d.minOrderValue,
-        maxDiscountAmount: d.maxDiscountAmount,
-        expiresAt: d.expireDate,
-        isPrivate: d.userId !== null,
-      }));
+      .map((d) => this.toVoucherPayload(d, { isSaved: false }));
+  }
+
+  async findAvailableCouponsForUser(
+    userId: string,
+    dto: QueryAvailableCouponsDto,
+  ) {
+    const now = new Date();
+    const orderValue = Number(dto.orderValue ?? 0);
+    const discounts = await this.discountsRepository.find({
+      where: { appliesTo: DiscountApplyTarget.ORDER, isActive: true },
+      order: { expireDate: 'ASC', createdAt: 'DESC' },
+    });
+
+    const visibleDiscounts = discounts.filter((discount) => {
+      const withinRange =
+        discount.startAt.getTime() <= now.getTime() &&
+        discount.expireDate.getTime() >= now.getTime();
+      const hasRemaining =
+        discount.usageLimit === null ||
+        discount.usedCount < discount.usageLimit;
+      const visibleForUser =
+        discount.userId === null || discount.userId === userId;
+      const approvalOk = [
+        DiscountApprovalStatus.NOT_REQUIRED,
+        DiscountApprovalStatus.APPROVED,
+      ].includes(discount.approvalStatus);
+
+      return withinRange && hasRemaining && visibleForUser && approvalOk;
+    });
+
+    const [usageRows, savedRows] = visibleDiscounts.length
+      ? await Promise.all([
+          this.couponUsageRepository.findBy(
+            visibleDiscounts.map((discount) => ({
+              discountId: discount.discountId,
+              userId,
+            })),
+          ),
+          this.savedVoucherRepository.findBy(
+            visibleDiscounts.map((discount) => ({
+              discountId: discount.discountId,
+              userId,
+            })),
+          ),
+        ])
+      : [[], []];
+    const usedDiscountIds = new Set(
+      usageRows.map((usage) => usage.discountId),
+    );
+    const savedDiscountIds = new Set(
+      savedRows.map((saved) => saved.discountId),
+    );
+
+    return visibleDiscounts.map((discount) => {
+      const minOrderValue = Number(discount.minOrderValue);
+      const isUsed = usedDiscountIds.has(discount.discountId);
+      const missingAmount = Math.max(0, minOrderValue - orderValue);
+      const eligible = !isUsed && missingAmount <= 0;
+      const discountAmount =
+        eligible && orderValue > 0
+          ? this.calculateDiscountAmount(discount, orderValue)
+          : 0;
+
+      return {
+        ...this.toVoucherPayload(discount, {
+          isSaved: savedDiscountIds.has(discount.discountId),
+        }),
+        usageLimit: discount.usageLimit,
+        usedCount: discount.usedCount,
+        eligible,
+        isUsed,
+        missingAmount: missingAmount.toFixed(2),
+        discountAmount: discountAmount.toFixed(2),
+        finalPrice: Math.max(0, orderValue - discountAmount).toFixed(2),
+        reason: isUsed
+          ? 'Bạn đã dùng voucher này'
+          : missingAmount > 0
+            ? `Cần mua thêm ${missingAmount.toFixed(0)}đ để dùng voucher`
+            : 'Có thể áp dụng cho giỏ hàng hiện tại',
+      };
+    });
   }
 
   async validateCoupon(userId: string, dto: ValidateCouponDto) {
@@ -389,6 +531,64 @@ export class DiscountsService {
     });
   }
 
+  async saveVoucher(userId: string, discountId: string) {
+    const discount = await this.discountsRepository.findOneBy({ discountId });
+    if (!discount || !this.isDiscountClaimableByUser(discount, userId)) {
+      throw new NotFoundException('Voucher not found or unavailable');
+    }
+
+    const existing = await this.savedVoucherRepository.findOneBy({
+      userId,
+      discountId,
+    });
+    if (existing) {
+      return {
+        saved: true,
+        savedAt: existing.savedAt,
+        voucher: this.toVoucherPayload(discount, { isSaved: true }),
+      };
+    }
+
+    const saved = await this.savedVoucherRepository.save(
+      this.savedVoucherRepository.create({ userId, discountId }),
+    );
+
+    return {
+      saved: true,
+      savedAt: saved.savedAt,
+      voucher: this.toVoucherPayload(discount, { isSaved: true }),
+    };
+  }
+
+  async getSavedVouchers(userId: string) {
+    const rows = await this.savedVoucherRepository.find({
+      where: { userId },
+      order: { savedAt: 'DESC' },
+    });
+    const discountIds = rows.map((row) => row.discountId);
+    const discounts = discountIds.length
+      ? await this.discountsRepository.findBy(
+          discountIds.map((discountId) => ({ discountId })),
+        )
+      : [];
+    const discountMap = new Map(
+      discounts.map((discount) => [discount.discountId, discount]),
+    );
+
+    return rows
+      .map((row) => {
+        const discount = discountMap.get(row.discountId);
+        if (!discount) return null;
+        return {
+          savedVoucherId: row.savedVoucherId,
+          savedAt: row.savedAt,
+          ...this.toVoucherPayload(discount, { isSaved: true }),
+          isAvailable: this.isDiscountClaimableByUser(discount, userId),
+        };
+      })
+      .filter(Boolean);
+  }
+
   async findDiscountsByProduct(productId: string) {
     const now = new Date();
     const productMappings = await this.discountProductsRepository.findBy({
@@ -432,6 +632,54 @@ export class DiscountsService {
   }
 
   // ─── PRIVATE HELPERS ─────────────────────────────────────────────────────────
+
+  private toVoucherPayload(
+    discount: DiscountEntity,
+    options: { isSaved?: boolean } = {},
+  ) {
+    return {
+      id: discount.discountId,
+      code: discount.discountCode,
+      name: discount.discountName,
+      description: discount.discountDescription,
+      type: discount.discountType,
+      value: discount.discountValue,
+      appliesTo: discount.appliesTo,
+      minOrderValue: discount.minOrderValue,
+      maxDiscountAmount: discount.maxDiscountAmount,
+      expiresAt: discount.expireDate,
+      isPrivate: discount.userId !== null,
+      usageLimit: discount.usageLimit,
+      usedCount: discount.usedCount,
+      remainingUses: this.getRemainingUses(discount),
+      isSaved: options.isSaved ?? false,
+    };
+  }
+
+  private getRemainingUses(discount: DiscountEntity) {
+    if (discount.usageLimit === null) return null;
+    return Math.max(0, discount.usageLimit - discount.usedCount);
+  }
+
+  private isDiscountApprovedForUse(discount: DiscountEntity) {
+    return [
+      DiscountApprovalStatus.NOT_REQUIRED,
+      DiscountApprovalStatus.APPROVED,
+    ].includes(discount.approvalStatus);
+  }
+
+  private isDiscountClaimableByUser(discount: DiscountEntity, userId: string) {
+    const now = Date.now();
+    return (
+      discount.appliesTo === DiscountApplyTarget.ORDER &&
+      discount.isActive &&
+      discount.startAt.getTime() <= now &&
+      discount.expireDate.getTime() >= now &&
+      this.getRemainingUses(discount) !== 0 &&
+      (discount.userId === null || discount.userId === userId) &&
+      this.isDiscountApprovedForUse(discount)
+    );
+  }
 
   private calculateDiscountAmount(
     discount: DiscountEntity,

@@ -1,4 +1,4 @@
-import {
+﻿import {
   Column,
   CreateDateColumn,
   Entity,
@@ -36,14 +36,30 @@ export class ProductEntity {
   })
   subcategoryId!: string | null;
 
-  @Index('idx_products_origin')
+  @Index('idx_products_brand')
   @Column({
-    name: 'origin_id',
+    name: 'brand_id',
     type: 'bigint',
     unsigned: true,
     nullable: true,
   })
   originId!: string | null;
+  @Column({
+    name: 'gender',
+    type: 'enum',
+    enum: ['men', 'women', 'unisex', 'kids'],
+    default: 'unisex',
+  })
+  gender!: 'men' | 'women' | 'unisex' | 'kids';
+
+  @Column({ name: 'material', type: 'varchar', length: 100, nullable: true })
+  material!: string | null;
+
+  @Column({ name: 'fit_type', type: 'varchar', length: 50, nullable: true })
+  fitType!: string | null;
+
+  @Column({ name: 'style', type: 'varchar', length: 50, nullable: true })
+  style!: string | null;
 
   @Index('idx_products_price')
   @Column({
@@ -65,6 +81,18 @@ export class ProductEntity {
 
   @Column({ name: 'quantity_available', type: 'int', default: 0 })
   quantityAvailable!: number;
+
+  @Column({ name: 'quantity_reserved', type: 'int', default: 0 })
+  quantityReserved!: number;
+
+  @Column({
+    name: 'avg_cost',
+    type: 'decimal',
+    precision: 15,
+    scale: 4,
+    default: 0,
+  })
+  avgCost!: string;
 
   @Column({ name: 'description', type: 'longtext', nullable: true })
   description!: string | null;
@@ -89,6 +117,14 @@ export class ProductEntity {
     default: 1,
   })
   isShow!: boolean;
+
+  @Column({
+    name: 'is_featured',
+    type: 'tinyint',
+    width: 1,
+    default: 0,
+  })
+  isFeatured!: boolean;
 
   @Index('idx_products_expired_at')
   @Column({
@@ -131,6 +167,24 @@ export class ProductEntity {
   })
   boxBarcode!: string | null;
 
+  @Column({
+    name: 'cost_price',
+    type: 'decimal',
+    precision: 15,
+    scale: 2,
+    nullable: true,
+  })
+  costPrice!: string | null;
+
+  @Column({
+    name: 'bulk_price',
+    type: 'decimal',
+    precision: 15,
+    scale: 2,
+    nullable: true,
+  })
+  bulkPrice!: string | null;
+
   @CreateDateColumn({
     name: 'created_at',
     type: 'datetime',
@@ -146,3 +200,4 @@ export class ProductEntity {
   })
   updatedAt!: Date;
 }
+

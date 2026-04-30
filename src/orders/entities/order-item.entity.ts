@@ -21,11 +21,31 @@ export class OrderItemEntity {
   @Column({ name: 'product_id', type: 'char', length: 36 })
   productId: string;
 
+  @Column({ name: 'variant_id', type: 'char', length: 36, nullable: true })
+  variantId: string | null;
+
+  @Column({ name: 'sku', type: 'varchar', length: 100, nullable: true })
+  sku: string | null;
+
+  @Column({ name: 'color_name', type: 'varchar', length: 80, nullable: true })
+  colorName: string | null;
+
+  @Column({ name: 'size_name', type: 'varchar', length: 50, nullable: true })
+  sizeName: string | null;
+
   @Column({ name: 'product_name', type: 'varchar', length: 255 })
   productName: string;
 
   @Column({ name: 'quantity', type: 'int' })
   quantity: number;
+
+  /**
+   * Số lượng đã giao thực tế.
+   * = quantity → DELIVERED bình thường
+   * < quantity → PARTIAL_DELIVERED (số chênh lệch đã restock + revert reserved)
+   */
+  @Column({ name: 'quantity_delivered', type: 'int', default: 0 })
+  quantityDelivered: number;
 
   @Column({
     name: 'unit_price',

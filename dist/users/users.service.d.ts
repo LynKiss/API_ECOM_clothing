@@ -1,0 +1,276 @@
+import { CartItemEntity } from '../carts/entities/cart-item.entity';
+import { ShoppingCartEntity } from '../carts/entities/shopping-cart.entity';
+import { ContactEntity } from '../contacts/entities/contact.entity';
+import { NotificationEntity } from '../notifications/entities/notification.entity';
+import { OrderItemEntity } from '../orders/entities/order-item.entity';
+import { OrderEntity } from '../orders/entities/order.entity';
+import { PaymentTransactionEntity } from '../orders/entities/payment-transaction.entity';
+import { ReturnEntity } from '../orders/entities/return.entity';
+import { ShippingAddressEntity } from '../orders/entities/shipping-address.entity';
+import { Repository } from 'typeorm';
+import { ChangePasswordDto } from './dto/change-password.dto';
+import { CreateAdminUserDto } from './dto/create-admin-user.dto';
+import { CreateShippingAddressDto } from './dto/create-shipping-address.dto';
+import { RegisterUserDto } from './dto/create-user.dto';
+import { QueryAdminUsersDto } from './dto/query-admin-users.dto';
+import { ResetAdminUserPasswordDto } from './dto/reset-admin-user-password.dto';
+import { UpdateAdminUserDto } from './dto/update-admin-user.dto';
+import { UpdateUserDto } from './dto/update-user.dto';
+import { UpdateAdminUserStatusDto } from './dto/update-admin-user-status.dto';
+import { UpdateShippingAddressDto } from './dto/update-shipping-address.dto';
+import { RefreshTokenEntity } from './entities/refresh-token.entity';
+import { UserEntity, UserRole } from './entities/user.entity';
+import { IUser } from './users.interface';
+import { WishlistEntity } from '../products/entities/wishlist.entity';
+type UploadedImageFile = {
+    buffer: Buffer;
+    mimetype: string;
+    size: number;
+    originalname: string;
+};
+export declare class UsersService {
+    private readonly usersRepository;
+    private readonly refreshTokensRepository;
+    private readonly contactsRepository;
+    private readonly shoppingCartsRepository;
+    private readonly cartItemsRepository;
+    private readonly wishlistRepository;
+    private readonly notificationsRepository;
+    private readonly shippingAddressesRepository;
+    private readonly ordersRepository;
+    private readonly orderItemsRepository;
+    private readonly returnsRepository;
+    private readonly paymentTransactionsRepository;
+    constructor(usersRepository: Repository<UserEntity>, refreshTokensRepository: Repository<RefreshTokenEntity>, contactsRepository: Repository<ContactEntity>, shoppingCartsRepository: Repository<ShoppingCartEntity>, cartItemsRepository: Repository<CartItemEntity>, wishlistRepository: Repository<WishlistEntity>, notificationsRepository: Repository<NotificationEntity>, shippingAddressesRepository: Repository<ShippingAddressEntity>, ordersRepository: Repository<OrderEntity>, orderItemsRepository: Repository<OrderItemEntity>, returnsRepository: Repository<ReturnEntity>, paymentTransactionsRepository: Repository<PaymentTransactionEntity>);
+    findOneByUsername(username: string): Promise<UserEntity | null>;
+    findOneByIdForAuth(userId: string): Promise<UserEntity | null>;
+    findAll(query?: QueryAdminUsersDto): Promise<{
+        meta: {
+            page: number;
+            limit: number;
+            total: number;
+            totalPages: number;
+        };
+        items: {
+            isActive: boolean;
+            createdAt: Date;
+            _id: string;
+            username: string;
+            email: string;
+            fullName?: string | null;
+            phoneNumber?: string | null;
+            avatarUrl?: string | null;
+            role: import("./users.interface").IUserRoleSummary;
+            permissions: import("./users.interface").IUserPermission[];
+        }[];
+    }>;
+    findProfile(userId: string): Promise<IUser>;
+    register(registerUserDto: RegisterUserDto): Promise<{
+        _id: string;
+        username: string;
+        email: string;
+        role: UserRole;
+        message: string;
+    }>;
+    hashPassword(password: string): Promise<string>;
+    createAdminUser(actorUserId: string, createAdminUserDto: CreateAdminUserDto): Promise<{
+        isActive: boolean;
+        createdAt: Date;
+        updatedAt: Date;
+        _id: string;
+        username: string;
+        email: string;
+        fullName?: string | null;
+        phoneNumber?: string | null;
+        avatarUrl?: string | null;
+        role: import("./users.interface").IUserRoleSummary;
+        permissions: import("./users.interface").IUserPermission[];
+    }>;
+    checkUserPassword(password: string, hash: string | null): Promise<boolean>;
+    updateUserRefreshToken(userId: string, refreshToken: string | null, expiredAt?: Date): Promise<void>;
+    validateStoredRefreshToken(userId: string, refreshToken: string): Promise<void>;
+    private toPublicUser;
+    private toShippingAddressResponse;
+    private toOrderSummaryResponse;
+    private ensureUserExists;
+    private ensureUniqueIdentity;
+    private clearDefaultShippingAddress;
+    private findOwnedShippingAddress;
+    updateProfile(userId: string, updateUserDto: UpdateUserDto): Promise<IUser>;
+    uploadMyAvatar(userId: string, file: UploadedImageFile | undefined): Promise<IUser>;
+    changePassword(userId: string, dto: ChangePasswordDto): Promise<{
+        message: string;
+    }>;
+    findMyShippingAddresses(userId: string): Promise<{
+        id: string;
+        recipientName: string;
+        phone: string;
+        addressLine: string;
+        ward: string | null;
+        district: string | null;
+        province: string | null;
+        isDefault: boolean;
+        createdAt: Date;
+        updatedAt: Date;
+    }[]>;
+    createShippingAddress(userId: string, createShippingAddressDto: CreateShippingAddressDto): Promise<{
+        id: string;
+        recipientName: string;
+        phone: string;
+        addressLine: string;
+        ward: string | null;
+        district: string | null;
+        province: string | null;
+        isDefault: boolean;
+        createdAt: Date;
+        updatedAt: Date;
+    }>;
+    updateShippingAddress(userId: string, shippingAddressId: string, updateShippingAddressDto: UpdateShippingAddressDto): Promise<{
+        id: string;
+        recipientName: string;
+        phone: string;
+        addressLine: string;
+        ward: string | null;
+        district: string | null;
+        province: string | null;
+        isDefault: boolean;
+        createdAt: Date;
+        updatedAt: Date;
+    }>;
+    deleteShippingAddress(userId: string, shippingAddressId: string): Promise<{
+        id: string;
+        deleted: boolean;
+    }>;
+    setDefaultShippingAddress(userId: string, shippingAddressId: string): Promise<{
+        id: string;
+        recipientName: string;
+        phone: string;
+        addressLine: string;
+        ward: string | null;
+        district: string | null;
+        province: string | null;
+        isDefault: boolean;
+        createdAt: Date;
+        updatedAt: Date;
+    }>;
+    findMyOrders(userId: string, opts: {
+        page: number;
+        limit: number;
+        status?: string;
+    }): Promise<{
+        items: {
+            id: string;
+            status: import("../orders/entities/order.entity").OrderStatus;
+            paymentMethod: import("../orders/entities/order.entity").PaymentMethod;
+            paymentStatus: import("../orders/entities/order.entity").PaymentStatus;
+            totalPayment: string;
+            totalQuantity: number;
+            createdAt: Date;
+            fullName: string;
+            phone: string;
+            address: string;
+        }[];
+        total: number;
+        page: number;
+        limit: number;
+        totalPages: number;
+    }>;
+    findMyOrderDetail(userId: string, orderId: string): Promise<{
+        shippingAddressId: string | null;
+        deliveryId: string | null;
+        discountId: string | null;
+        subtotalAmount: string;
+        discountAmount: string;
+        deliveryCost: string;
+        note: string | null;
+        items: {
+            id: string;
+            productId: string;
+            productName: string;
+            quantity: number;
+            unitPrice: string;
+            lineTotal: string;
+        }[];
+        id: string;
+        status: import("../orders/entities/order.entity").OrderStatus;
+        paymentMethod: import("../orders/entities/order.entity").PaymentMethod;
+        paymentStatus: import("../orders/entities/order.entity").PaymentStatus;
+        totalPayment: string;
+        totalQuantity: number;
+        createdAt: Date;
+        fullName: string;
+        phone: string;
+        address: string;
+    }>;
+    findAdminUserDetail(userId: string): Promise<{
+        isActive: boolean;
+        createdAt: Date;
+        updatedAt: Date;
+        statistics: {
+            addressesCount: number;
+            ordersCount: number;
+        };
+        _id: string;
+        username: string;
+        email: string;
+        fullName?: string | null;
+        phoneNumber?: string | null;
+        avatarUrl?: string | null;
+        role: import("./users.interface").IUserRoleSummary;
+        permissions: import("./users.interface").IUserPermission[];
+    }>;
+    updateAdminUser(actorUserId: string, userId: string, updateAdminUserDto: UpdateAdminUserDto): Promise<{
+        isActive: boolean;
+        createdAt: Date;
+        updatedAt: Date;
+        _id: string;
+        username: string;
+        email: string;
+        fullName?: string | null;
+        phoneNumber?: string | null;
+        avatarUrl?: string | null;
+        role: import("./users.interface").IUserRoleSummary;
+        permissions: import("./users.interface").IUserPermission[];
+    }>;
+    uploadAdminUserAvatar(actorUserId: string, userId: string, file: UploadedImageFile | undefined): Promise<{
+        isActive: boolean;
+        createdAt: Date;
+        updatedAt: Date;
+        _id: string;
+        username: string;
+        email: string;
+        fullName?: string | null;
+        phoneNumber?: string | null;
+        avatarUrl?: string | null;
+        role: import("./users.interface").IUserRoleSummary;
+        permissions: import("./users.interface").IUserPermission[];
+    }>;
+    updateAdminUserStatus(actorUserId: string, userId: string, updateAdminUserStatusDto: UpdateAdminUserStatusDto): Promise<{
+        isActive: boolean;
+        _id: string;
+        username: string;
+        email: string;
+        fullName?: string | null;
+        phoneNumber?: string | null;
+        avatarUrl?: string | null;
+        role: import("./users.interface").IUserRoleSummary;
+        permissions: import("./users.interface").IUserPermission[];
+    }>;
+    resetAdminUserPassword(actorUserId: string, userId: string, dto: ResetAdminUserPasswordDto): Promise<{
+        passwordReset: boolean;
+        _id: string;
+        username: string;
+        email: string;
+        fullName?: string | null;
+        phoneNumber?: string | null;
+        avatarUrl?: string | null;
+        role: import("./users.interface").IUserRoleSummary;
+        permissions: import("./users.interface").IUserPermission[];
+    }>;
+    deleteAdminUser(actorUserId: string, userId: string): Promise<{
+        _id: string;
+        deleted: boolean;
+    }>;
+    private uploadAvatarToCloudinary;
+}
+export {};

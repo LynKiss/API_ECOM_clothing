@@ -7,35 +7,56 @@ import { DiscountProductEntity } from '../discounts/entities/discount-product.en
 import { DiscountEntity } from '../discounts/entities/discount.entity';
 import { ShoppingCartEntity } from '../carts/entities/shopping-cart.entity';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { AuthModule } from '../auth/auth.module';
 import { ProductEntity } from '../products/entities/product.entity';
+import { ProductVariantEntity } from '../products/entities/product-variant.entity';
+import { ColorEntity } from '../products/entities/color.entity';
+import { SizeEntity } from '../products/entities/size.entity';
 import { InventoryTransactionEntity } from '../products/entities/inventory-transaction.entity';
+import { RolesModule } from '../roles/roles.module';
+import { WarehouseEntity } from '../warehouses/entities/warehouse.entity';
+import { WarehouseStockEntity } from '../warehouses/entities/warehouse-stock.entity';
+import { SettingsModule } from '../settings/settings.module';
 import { UserEntity } from '../users/entities/user.entity';
+import { DeliveryMethodsController } from './delivery-methods.controller';
 import { OrdersController } from './orders.controller';
 import { PaymentsController } from './payments.controller';
 import { ReturnsController } from './returns.controller';
 import { DeliveryMethodEntity } from './entities/delivery-method.entity';
 import { OrderItemEntity } from './entities/order-item.entity';
+import { OrderTrackingEntity } from './entities/order-tracking.entity';
 import { OrderStatusHistoryEntity } from './entities/order-status-history.entity';
 import { OrderEntity } from './entities/order.entity';
 import { PaymentTransactionEntity } from './entities/payment-transaction.entity';
 import { ReturnEntity } from './entities/return.entity';
 import { ShippingAddressEntity } from './entities/shipping-address.entity';
+import { OrdersAdminGateway } from './orders-admin.gateway';
+import { OrdersAdminPublisher } from './orders-admin.publisher';
 import { OrdersService } from './orders.service';
 
 @Module({
   imports: [
+    AuthModule,
     NotificationsModule,
+    RolesModule,
+    SettingsModule,
     TypeOrmModule.forFeature([
       DeliveryMethodEntity,
       ShippingAddressEntity,
       OrderEntity,
+      OrderTrackingEntity,
       OrderItemEntity,
       OrderStatusHistoryEntity,
       ReturnEntity,
       ShoppingCartEntity,
       CartItemEntity,
       ProductEntity,
+      ProductVariantEntity,
+      ColorEntity,
+      SizeEntity,
       InventoryTransactionEntity,
+      WarehouseEntity,
+      WarehouseStockEntity,
       UserEntity,
       DiscountEntity,
       DiscountCategoryEntity,
@@ -44,8 +65,8 @@ import { OrdersService } from './orders.service';
       PaymentTransactionEntity,
     ]),
   ],
-  controllers: [OrdersController, PaymentsController, ReturnsController],
-  providers: [OrdersService],
+  controllers: [OrdersController, PaymentsController, ReturnsController, DeliveryMethodsController],
+  providers: [OrdersService, OrdersAdminPublisher, OrdersAdminGateway],
   exports: [OrdersService, TypeOrmModule],
 })
 export class OrdersModule {}

@@ -18,6 +18,7 @@ import {
 import type { IUser } from '../users/users.interface';
 import { ApplyCouponDto } from './dto/apply-coupon.dto';
 import { CreateDiscountDto } from './dto/create-discount.dto';
+import { QueryAvailableCouponsDto } from './dto/query-available-coupons.dto';
 import { UpdateDiscountDto } from './dto/update-discount.dto';
 import { ValidateCouponDto } from './dto/validate-coupon.dto';
 import { DiscountsService } from './discounts.service';
@@ -65,6 +66,16 @@ export class DiscountsController {
     return this.discountsService.applyCoupon(user._id, dto);
   }
 
+  @Post('available-for-cart')
+  @SkipCheckPermission()
+  @ResponseMessage('Get coupons available for current cart')
+  getAvailableCouponsForCart(
+    @User() user: IUser,
+    @Body() dto: QueryAvailableCouponsDto,
+  ) {
+    return this.discountsService.findAvailableCouponsForUser(user._id, dto);
+  }
+
   @Get('my-history')
   @SkipCheckPermission()
   @ResponseMessage('Get my coupon usage history')
@@ -73,6 +84,20 @@ export class DiscountsController {
   }
 
   // ─── ADMIN ────────────────────────────────────────────────────────────────────
+
+  @Get('my-saved')
+  @SkipCheckPermission()
+  @ResponseMessage('Get my saved vouchers')
+  getMySavedVouchers(@User() user: IUser) {
+    return this.discountsService.getSavedVouchers(user._id);
+  }
+
+  @Post(':id/save')
+  @SkipCheckPermission()
+  @ResponseMessage('Save voucher')
+  saveVoucher(@Param('id') id: string, @User() user: IUser) {
+    return this.discountsService.saveVoucher(user._id, id);
+  }
 
   @Get('admin')
   @RequirePermissions('manage_discounts')
@@ -100,6 +125,30 @@ export class DiscountsController {
   @ResponseMessage('Create discount')
   createDiscount(@Body() dto: CreateDiscountDto) {
     return this.discountsService.create(dto);
+  }
+
+  /** Approve discount đang chờ duyệt (giảm > 30%). */
+  @Patch('admin/:id/approve')
+  @RequirePermissions('manage_discounts')
+  @ResponseMessage('Approve high-discount')
+  approveDiscount(
+    @Param('id') id: string,
+    @User() user: IUser,
+    @Body('note') note?: string,
+  ) {
+    return this.discountsService.approveDiscount(id, user._id, note);
+  }
+
+  /** Reject discount đang chờ duyệt. */
+  @Patch('admin/:id/reject')
+  @RequirePermissions('manage_discounts')
+  @ResponseMessage('Reject high-discount')
+  rejectDiscount(
+    @Param('id') id: string,
+    @User() user: IUser,
+    @Body('note') note?: string,
+  ) {
+    return this.discountsService.rejectDiscount(id, user._id, note);
   }
 
   @Patch(':id')

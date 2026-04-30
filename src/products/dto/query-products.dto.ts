@@ -35,11 +35,19 @@ export class QueryProductsDto {
 
   @IsOptional()
   @IsString()
+  categoryIds?: string;
+
+  @IsOptional()
+  @IsString()
   subcategoryId?: string;
 
   @IsOptional()
   @IsString()
   originId?: string;
+
+  @IsOptional()
+  @IsString()
+  tagId?: string;
 
   @IsOptional()
   @IsNumberString()
@@ -90,4 +98,14 @@ export class QueryProductsDto {
   @IsInt()
   @Min(0)
   lowStockThreshold?: number = 10;
+
+  @IsOptional()
+  @ToBoolean()
+  @IsBoolean()
+  isFeatured?: boolean;
+
+  @IsOptional()
+  @ToBoolean()
+  @IsBoolean()
+  hasSalePrice?: boolean;
 }

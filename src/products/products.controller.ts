@@ -1,4 +1,4 @@
-import {
+﻿import {
   Body,
   Controller,
   Delete,
@@ -16,10 +16,13 @@ import {
   RequirePermissions,
   ResponseMessage,
 } from '../decorator/customize';
+import { CreateColorDto } from './dto/create-color.dto';
 import { CreateProductDto } from './dto/create-product.dto';
+import { CreateSizeDto } from './dto/create-size.dto';
 import { QueryProductsDto } from './dto/query-products.dto';
 import { ReorderImagesDto } from './dto/reorder-images.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
+import { UpsertProductVariantDto } from './dto/upsert-product-variant.dto';
 import { ProductsService } from './products.service';
 
 type UploadedImageFile = {
@@ -40,6 +43,33 @@ export class ProductsController {
     return this.productsService.findAll(query);
   }
 
+  @Public()
+  @Get('colors')
+  @ResponseMessage('Get product colors')
+  getColors() {
+    return this.productsService.findColors();
+  }
+
+  @Post('colors')
+  @RequirePermissions('manage_products')
+  @ResponseMessage('Create product color')
+  createColor(@Body() dto: CreateColorDto) {
+    return this.productsService.createColor(dto);
+  }
+
+  @Public()
+  @Get('sizes')
+  @ResponseMessage('Get product sizes')
+  getSizes() {
+    return this.productsService.findSizes();
+  }
+
+  @Post('sizes')
+  @RequirePermissions('manage_products')
+  @ResponseMessage('Create product size')
+  createSize(@Body() dto: CreateSizeDto) {
+    return this.productsService.createSize(dto);
+  }
   @Public()
   @Get(':id')
   @ResponseMessage('Get product detail')
@@ -64,11 +94,78 @@ export class ProductsController {
     return this.productsService.update(id, updateProductDto);
   }
 
+  @Public()
+  @Get(':id/variants')
+  @ResponseMessage('Get product variants')
+  getProductVariants(@Param('id') id: string) {
+    return this.productsService.findProductVariants(id);
+  }
+
+  @Post(':id/variants')
+  @RequirePermissions('manage_products')
+  @ResponseMessage('Create product variant')
+  createProductVariant(
+    @Param('id') id: string,
+    @Body() dto: UpsertProductVariantDto,
+  ) {
+    return this.productsService.createVariant(id, dto);
+  }
+
+  @Patch(':id/variants/:variantId')
+  @RequirePermissions('manage_products')
+  @ResponseMessage('Update product variant')
+  updateProductVariant(
+    @Param('id') id: string,
+    @Param('variantId') variantId: string,
+    @Body() dto: UpsertProductVariantDto,
+  ) {
+    return this.productsService.updateVariant(id, variantId, dto);
+  }
+
+  @Delete(':id/variants/:variantId')
+  @RequirePermissions('manage_products')
+  @ResponseMessage('Deactivate product variant')
+  deactivateProductVariant(
+    @Param('id') id: string,
+    @Param('variantId') variantId: string,
+  ) {
+    return this.productsService.deactivateVariant(id, variantId);
+  }
+
+  @Post(':id/variants/:variantId/images')
+  @RequirePermissions('manage_products')
+  @UseInterceptors(FileInterceptor('file'))
+  @ResponseMessage('Upload product variant image')
+  uploadProductVariantImage(
+    @Param('id') id: string,
+    @Param('variantId') variantId: string,
+    @UploadedFile() file: UploadedImageFile,
+  ) {
+    return this.productsService.uploadVariantImage(id, variantId, file);
+  }
+
+  @Delete(':id/variants/:variantId/images/:imageId')
+  @RequirePermissions('manage_products')
+  @ResponseMessage('Delete product variant image')
+  deleteProductVariantImage(
+    @Param('id') id: string,
+    @Param('variantId') variantId: string,
+    @Param('imageId') imageId: string,
+  ) {
+    return this.productsService.deleteVariantImage(id, variantId, imageId);
+  }
   @Patch(':id/toggle-visibility')
   @RequirePermissions('manage_products')
   @ResponseMessage('Toggle product visibility')
   toggleProductVisibility(@Param('id') id: string) {
     return this.productsService.toggleVisibility(id);
+  }
+
+  @Patch(':id/toggle-featured')
+  @RequirePermissions('manage_products')
+  @ResponseMessage('Toggle product featured')
+  toggleProductFeatured(@Param('id') id: string) {
+    return this.productsService.toggleFeatured(id);
   }
 
   @Delete(':id')
@@ -78,7 +175,7 @@ export class ProductsController {
     return this.productsService.remove(id);
   }
 
-  // ─── Images ─────────────────────────────────────────────────────────────────
+  // â”€â”€â”€ Images â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   @Public()
   @Get(':id/images')
@@ -130,7 +227,7 @@ export class ProductsController {
     return this.productsService.deleteProductImage(id, imageId);
   }
 
-  // ─── Description Images ──────────────────────────────────────────────────────
+  // â”€â”€â”€ Description Images â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   @Public()
   @Get(':id/description-images')
@@ -160,3 +257,4 @@ export class ProductsController {
     return this.productsService.deleteDescriptionImage(id, imageId);
   }
 }
+

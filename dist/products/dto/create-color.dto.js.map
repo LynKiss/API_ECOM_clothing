@@ -1,0 +1,1 @@
+{"version":3,"file":"create-color.dto.js","sourceRoot":"","sources":["../../../src/products/dto/create-color.dto.ts"],"names":[],"mappings":";;;;;;;;;;;;AAAA,qDAAkE;AAElE,MAAa,cAAc;IAGzB,SAAS,CAAS;IAKlB,SAAS,CAAU;CACpB;AATD,wCASC;AANC;IAFC,IAAA,0BAAQ,GAAE;IACV,IAAA,2BAAS,EAAC,GAAG,CAAC;;iDACG;AAKlB;IAHC,IAAA,4BAAU,GAAE;IACZ,IAAA,0BAAQ,GAAE;IACV,IAAA,2BAAS,EAAC,EAAE,CAAC;;iDACK"}

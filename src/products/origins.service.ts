@@ -1,4 +1,4 @@
-import {
+﻿import {
   ConflictException,
   Injectable,
   NotFoundException,
@@ -41,7 +41,7 @@ export class OriginsService {
   async findOne(originId: string) {
     const origin = await this.originsRepository.findOneBy({ originId });
     if (!origin) {
-      throw new NotFoundException('Origin not found');
+      throw new NotFoundException('Brand not found');
     }
     return origin;
   }
@@ -52,6 +52,9 @@ export class OriginsService {
     const origin = this.originsRepository.create({
       originName: dto.originName,
       originImage: dto.originImage ?? null,
+      brandSlug: this.slugify(dto.originName),
+      brandDescription: null,
+      isActive: true,
     });
 
     return this.originsRepository.save(origin);
@@ -67,6 +70,7 @@ export class OriginsService {
     origin.originName = dto.originName ?? origin.originName;
     origin.originImage =
       dto.originImage !== undefined ? (dto.originImage ?? null) : origin.originImage;
+    origin.brandSlug = dto.originName ? this.slugify(origin.originName) : origin.brandSlug;
 
     return this.originsRepository.save(origin);
   }
@@ -77,12 +81,22 @@ export class OriginsService {
     return { success: true };
   }
 
+  private slugify(value: string) {
+    return value
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '') || 'brand';
+  }
+
   private async ensureNameUnique(name: string, excludeId?: string) {
     const existing = await this.originsRepository.findOneBy({
       originName: name,
     });
     if (existing && existing.originId !== excludeId) {
-      throw new ConflictException('Origin name already exists');
+      throw new ConflictException('Brand name already exists');
     }
   }
 }
+
