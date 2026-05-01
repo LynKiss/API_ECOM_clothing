@@ -44,11 +44,11 @@ __decorate([
     __metadata("design:type", Object)
 ], ProductVariantEntity.prototype, "colorId", void 0);
 __decorate([
-    (0, typeorm_1.Column)({ name: 'sku', type: 'varchar', length: 120, nullable: true }),
-    __metadata("design:type", Object)
+    (0, typeorm_1.Column)({ name: 'sku', type: 'varchar', length: 100 }),
+    __metadata("design:type", String)
 ], ProductVariantEntity.prototype, "sku", void 0);
 __decorate([
-    (0, typeorm_1.Column)({ name: 'barcode', type: 'varchar', length: 120, nullable: true }),
+    (0, typeorm_1.Column)({ name: 'barcode', type: 'varchar', length: 100, nullable: true }),
     __metadata("design:type", Object)
 ], ProductVariantEntity.prototype, "barcode", void 0);
 __decorate([
@@ -57,9 +57,8 @@ __decorate([
         type: 'decimal',
         precision: 15,
         scale: 2,
-        nullable: true,
     }),
-    __metadata("design:type", Object)
+    __metadata("design:type", String)
 ], ProductVariantEntity.prototype, "price", void 0);
 __decorate([
     (0, typeorm_1.Column)({

@@ -70,9 +70,9 @@ export declare class ProductsService {
             variants: {
                 variantId: string;
                 productId: string;
-                sku: string | null;
+                sku: string;
                 barcode: string | null;
-                price: string | null;
+                price: string;
                 salePrice: string | null;
                 stockQuantity: number;
                 weightGrams: number | null;
@@ -166,9 +166,9 @@ export declare class ProductsService {
         variants: {
             variantId: string;
             productId: string;
-            sku: string | null;
+            sku: string;
             barcode: string | null;
-            price: string | null;
+            price: string;
             salePrice: string | null;
             stockQuantity: number;
             weightGrams: number | null;
@@ -334,9 +334,9 @@ export declare class ProductsService {
     findProductVariants(productId: string): Promise<{
         variantId: string;
         productId: string;
-        sku: string | null;
+        sku: string;
         barcode: string | null;
-        price: string | null;
+        price: string;
         salePrice: string | null;
         stockQuantity: number;
         weightGrams: number | null;
@@ -361,9 +361,9 @@ export declare class ProductsService {
     createVariant(productId: string, dto: UpsertProductVariantDto): Promise<{
         variantId: string;
         productId: string;
-        sku: string | null;
+        sku: string;
         barcode: string | null;
-        price: string | null;
+        price: string;
         salePrice: string | null;
         stockQuantity: number;
         weightGrams: number | null;
@@ -388,9 +388,9 @@ export declare class ProductsService {
     updateVariant(productId: string, variantId: string, dto: UpsertProductVariantDto): Promise<{
         variantId: string;
         productId: string;
-        sku: string | null;
+        sku: string;
         barcode: string | null;
-        price: string | null;
+        price: string;
         salePrice: string | null;
         stockQuantity: number;
         weightGrams: number | null;
@@ -545,7 +545,13 @@ export declare class ProductsService {
     private resolveCreateVariantColorId;
     private resolveCreateVariantSizeId;
     private prepareCreateVariants;
+    private ensureVariantHasRequiredOptions;
     private ensureVariantOptionsExist;
+    private resolveVariantPrice;
+    private toSkuSegment;
+    private resolveVariantSku;
+    private ensureVariantSkuIsAvailable;
+    private variantSkuExists;
     private ensureVariantPricesAreValid;
     private ensureUniqueVariantOptionPair;
     private ensureVariantExists;

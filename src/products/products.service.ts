@@ -362,9 +362,15 @@ export class ProductsService {
       throw new BadRequestException('Sale price cannot exceed regular price');
     }
 
+    const productId = createProductDto.productId ?? randomUUID();
     const preparedVariants = await this.prepareCreateVariants(
       createProductDto.variants ?? [],
       createProductDto.productPrice,
+      {
+        productId,
+        productName: createProductDto.productName,
+        productSlug: createProductDto.productSlug ?? null,
+      },
     );
     const variantStock = preparedVariants.reduce(
       (sum, variant) => sum + (variant.stockQuantity ?? 0),
@@ -373,7 +379,7 @@ export class ProductsService {
     const baseStock = createProductDto.quantityAvailable ?? 0;
 
     const product = this.productsRepository.create({
-      productId: createProductDto.productId ?? randomUUID(),
+      productId,
       productName: createProductDto.productName,
       productSlug: this.normalizeSlug(
         createProductDto.productSlug ?? createProductDto.productName,
@@ -611,18 +617,25 @@ export class ProductsService {
 
   async createVariant(productId: string, dto: UpsertProductVariantDto) {
     const product = await this.ensureProductExists(productId);
+    this.ensureVariantHasRequiredOptions(dto.colorId, dto.sizeId);
     await this.ensureVariantOptionsExist(dto);
     this.ensureVariantPricesAreValid(dto, product.productPrice);
     await this.ensureUniqueVariantOptionPair(productId, dto.colorId, dto.sizeId);
+    const sku = await this.resolveVariantSku(
+      product,
+      dto.colorId!,
+      dto.sizeId!,
+      dto.sku,
+    );
 
     const variant = this.productVariantsRepository.create({
       variantId: randomUUID(),
       productId,
-      colorId: dto.colorId || null,
-      sizeId: dto.sizeId || null,
-      sku: dto.sku?.trim() || null,
+      colorId: dto.colorId!,
+      sizeId: dto.sizeId!,
+      sku,
       barcode: dto.barcode?.trim() || null,
-      price: dto.price || null,
+      price: this.resolveVariantPrice(dto.price, product.productPrice),
       salePrice: dto.salePrice || null,
       stockQuantity: dto.stockQuantity ?? 0,
       weightGrams: dto.weightGrams ?? null,
@@ -650,6 +663,7 @@ export class ProductsService {
 
     const nextColorId = dto.colorId !== undefined ? dto.colorId || null : variant.colorId;
     const nextSizeId = dto.sizeId !== undefined ? dto.sizeId || null : variant.sizeId;
+    this.ensureVariantHasRequiredOptions(nextColorId, nextSizeId);
     await this.ensureUniqueVariantOptionPair(productId, nextColorId, nextSizeId, variantId);
 
     this.ensureVariantPricesAreValid(
@@ -662,9 +676,19 @@ export class ProductsService {
 
     variant.colorId = nextColorId;
     variant.sizeId = nextSizeId;
-    if (dto.sku !== undefined) variant.sku = dto.sku.trim() || null;
+    if (dto.sku !== undefined || !variant.sku) {
+      variant.sku = await this.resolveVariantSku(
+        product,
+        nextColorId!,
+        nextSizeId!,
+        dto.sku ?? variant.sku,
+        variantId,
+      );
+    }
     if (dto.barcode !== undefined) variant.barcode = dto.barcode.trim() || null;
-    if (dto.price !== undefined) variant.price = dto.price || null;
+    if (dto.price !== undefined || !variant.price) {
+      variant.price = this.resolveVariantPrice(dto.price ?? variant.price, product.productPrice);
+    }
     if (dto.salePrice !== undefined) variant.salePrice = dto.salePrice || null;
     const previousStockQuantity = variant.stockQuantity;
     if (dto.stockQuantity !== undefined) variant.stockQuantity = dto.stockQuantity;
@@ -1558,16 +1582,18 @@ export class ProductsService {
   private async prepareCreateVariants(
     variants: CreateProductVariantDto[],
     fallbackPrice: string,
+    productIdentity: Pick<ProductEntity, 'productId' | 'productName'> & {
+      productSlug?: string | null;
+    },
   ) {
     const prepared: Array<Partial<ProductVariantEntity>> = [];
     const optionPairs = new Set<string>();
+    const usedSkus = new Set<string>();
 
     for (const dto of variants) {
       const colorId = (await this.resolveCreateVariantColorId(dto)) ?? null;
       const sizeId = (await this.resolveCreateVariantSizeId(dto)) ?? null;
-      if (!colorId && !sizeId) {
-        throw new BadRequestException('Variant must have a color or size');
-      }
+      this.ensureVariantHasRequiredOptions(colorId, sizeId);
 
       await this.ensureVariantOptionsExist({ colorId, sizeId });
       this.ensureVariantPricesAreValid(dto, fallbackPrice);
@@ -1580,13 +1606,23 @@ export class ProductsService {
       }
       optionPairs.add(optionKey);
 
+      const sku = await this.resolveVariantSku(
+        productIdentity,
+        colorId!,
+        sizeId!,
+        dto.sku,
+        undefined,
+        usedSkus,
+      );
+      usedSkus.add(sku);
+
       prepared.push({
         variantId: randomUUID(),
-        colorId,
-        sizeId,
-        sku: dto.sku?.trim() || null,
+        colorId: colorId!,
+        sizeId: sizeId!,
+        sku,
         barcode: dto.barcode?.trim() || null,
-        price: dto.price || null,
+        price: this.resolveVariantPrice(dto.price, fallbackPrice),
         salePrice: dto.salePrice || null,
         stockQuantity: dto.stockQuantity ?? 0,
         weightGrams: dto.weightGrams ?? null,
@@ -1595,6 +1631,15 @@ export class ProductsService {
     }
 
     return prepared;
+  }
+
+  private ensureVariantHasRequiredOptions(
+    colorId?: string | null,
+    sizeId?: string | null,
+  ) {
+    if (!colorId || !sizeId) {
+      throw new BadRequestException('Variant must have both color and size');
+    }
   }
 
   private async ensureVariantOptionsExist(
@@ -1608,6 +1653,93 @@ export class ProductsService {
       const size = await this.sizesRepository.findOneBy({ sizeId: dto.sizeId });
       if (!size) throw new NotFoundException('Size not found');
     }
+  }
+
+  private resolveVariantPrice(price: string | undefined | null, fallbackPrice: string) {
+    const normalized = price?.trim();
+    return normalized && normalized.length > 0 ? normalized : fallbackPrice;
+  }
+
+  private toSkuSegment(value: string | undefined | null, fallback: string) {
+    const normalized = (value ?? '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 24);
+    return normalized || fallback;
+  }
+
+  private async resolveVariantSku(
+    product: Pick<ProductEntity, 'productId' | 'productName'> & {
+      productSlug?: string | null;
+    },
+    colorId: string,
+    sizeId: string,
+    sku?: string | null,
+    excludeVariantId?: string,
+    reservedSkus = new Set<string>(),
+  ) {
+    const requestedSku = sku?.trim();
+    if (requestedSku) {
+      await this.ensureVariantSkuIsAvailable(requestedSku, excludeVariantId);
+      if (reservedSkus.has(requestedSku)) {
+        throw new ConflictException('Variant SKU already exists');
+      }
+      return requestedSku;
+    }
+
+    const [color, size] = await Promise.all([
+      this.colorsRepository.findOneBy({ colorId }),
+      this.sizesRepository.findOneBy({ sizeId }),
+    ]);
+    const productSegment = this.toSkuSegment(
+      product.productSlug ?? product.productName,
+      product.productId.slice(0, 8),
+    );
+    const colorSegment = this.toSkuSegment(
+      color?.colorCode ?? color?.colorName,
+      `C${colorId}`,
+    );
+    const sizeSegment = this.toSkuSegment(
+      size?.sizeCode ?? size?.sizeName,
+      `S${sizeId}`,
+    );
+    const baseSku = `${productSegment}-${colorSegment}-${sizeSegment}`.slice(0, 92);
+
+    for (let index = 0; index < 50; index += 1) {
+      const suffix = index === 0 ? '' : `-${index + 1}`;
+      const candidate = `${baseSku}${suffix}`.slice(0, 100);
+      const exists = await this.variantSkuExists(candidate, excludeVariantId);
+      if (!exists && !reservedSkus.has(candidate)) {
+        return candidate;
+      }
+    }
+
+    return `${baseSku.slice(0, 91)}-${randomUUID().slice(0, 8).toUpperCase()}`;
+  }
+
+  private async ensureVariantSkuIsAvailable(
+    sku: string,
+    excludeVariantId?: string,
+  ) {
+    const exists = await this.variantSkuExists(sku, excludeVariantId);
+    if (exists) {
+      throw new ConflictException('Variant SKU already exists');
+    }
+  }
+
+  private async variantSkuExists(sku: string, excludeVariantId?: string) {
+    const qb = this.productVariantsRepository
+      .createQueryBuilder('variant')
+      .where('variant.sku = :sku', { sku });
+    if (excludeVariantId) {
+      qb.andWhere('variant.variant_id <> :excludeVariantId', {
+        excludeVariantId,
+      });
+    }
+    return (await qb.getCount()) > 0;
   }
 
   private ensureVariantPricesAreValid(

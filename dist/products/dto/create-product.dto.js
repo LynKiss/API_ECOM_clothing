@@ -84,13 +84,13 @@ __decorate([
 __decorate([
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsString)(),
-    (0, class_validator_1.MaxLength)(120),
+    (0, class_validator_1.MaxLength)(100),
     __metadata("design:type", String)
 ], CreateProductVariantDto.prototype, "sku", void 0);
 __decorate([
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsString)(),
-    (0, class_validator_1.MaxLength)(120),
+    (0, class_validator_1.MaxLength)(100),
     __metadata("design:type", String)
 ], CreateProductVariantDto.prototype, "barcode", void 0);
 __decorate([

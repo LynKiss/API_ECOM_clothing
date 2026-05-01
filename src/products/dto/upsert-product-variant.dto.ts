@@ -21,12 +21,12 @@ export class UpsertProductVariantDto {
 
   @IsOptional()
   @IsString()
-  @MaxLength(120)
+  @MaxLength(100)
   sku?: string;
 
   @IsOptional()
   @IsString()
-  @MaxLength(120)
+  @MaxLength(100)
   barcode?: string;
 
   @IsOptional()

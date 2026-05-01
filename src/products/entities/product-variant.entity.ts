@@ -20,10 +20,10 @@ export class ProductVariantEntity {
   @Column({ name: 'color_id', type: 'bigint', unsigned: true, nullable: true })
   colorId: string | null;
 
-  @Column({ name: 'sku', type: 'varchar', length: 120, nullable: true })
-  sku: string | null;
+  @Column({ name: 'sku', type: 'varchar', length: 100 })
+  sku: string;
 
-  @Column({ name: 'barcode', type: 'varchar', length: 120, nullable: true })
+  @Column({ name: 'barcode', type: 'varchar', length: 100, nullable: true })
   barcode: string | null;
 
   @Column({
@@ -31,9 +31,8 @@ export class ProductVariantEntity {
     type: 'decimal',
     precision: 15,
     scale: 2,
-    nullable: true,
   })
-  price: string | null;
+  price: string;
 
   @Column({
     name: 'sale_price',

@@ -27,9 +27,9 @@ export declare class ProductsController {
             variants: {
                 variantId: string;
                 productId: string;
-                sku: string | null;
+                sku: string;
                 barcode: string | null;
-                price: string | null;
+                price: string;
                 salePrice: string | null;
                 stockQuantity: number;
                 weightGrams: number | null;
@@ -127,9 +127,9 @@ export declare class ProductsController {
         variants: {
             variantId: string;
             productId: string;
-            sku: string | null;
+            sku: string;
             barcode: string | null;
-            price: string | null;
+            price: string;
             salePrice: string | null;
             stockQuantity: number;
             weightGrams: number | null;
@@ -216,9 +216,9 @@ export declare class ProductsController {
     getProductVariants(id: string): Promise<{
         variantId: string;
         productId: string;
-        sku: string | null;
+        sku: string;
         barcode: string | null;
-        price: string | null;
+        price: string;
         salePrice: string | null;
         stockQuantity: number;
         weightGrams: number | null;
@@ -243,9 +243,9 @@ export declare class ProductsController {
     createProductVariant(id: string, dto: UpsertProductVariantDto): Promise<{
         variantId: string;
         productId: string;
-        sku: string | null;
+        sku: string;
         barcode: string | null;
-        price: string | null;
+        price: string;
         salePrice: string | null;
         stockQuantity: number;
         weightGrams: number | null;
@@ -270,9 +270,9 @@ export declare class ProductsController {
     updateProductVariant(id: string, variantId: string, dto: UpsertProductVariantDto): Promise<{
         variantId: string;
         productId: string;
-        sku: string | null;
+        sku: string;
         barcode: string | null;
-        price: string | null;
+        price: string;
         salePrice: string | null;
         stockQuantity: number;
         weightGrams: number | null;
