@@ -4,10 +4,12 @@ export declare class SettingsController {
     constructor(settingsService: SettingsService);
     getPublicCommerceSettings(): Promise<{
         payments: import("./settings.service").PublicPaymentSettings;
+        clientFeatures: import("./settings.service").ClientFeatureSettings;
     }>;
     getAdminCommerceSettings(): Promise<{
         payments: import("./settings.service").PaymentSettings;
         smtp: import("./settings.service").SmtpSettings;
+        clientFeatures: import("./settings.service").ClientFeatureSettings;
     }>;
     updatePaymentSettings(body: {
         payments?: Record<string, unknown>;
@@ -19,4 +21,8 @@ export declare class SettingsController {
     updateAdminSidebarSettings(body: {
         hiddenItemIds?: string[];
     }): Promise<import("./settings.service").AdminSidebarSettings>;
+    getClientFeatureSettings(): Promise<import("./settings.service").ClientFeatureSettings>;
+    updateClientFeatureSettings(body: {
+        productRecommendationsEnabled?: boolean;
+    }): Promise<import("./settings.service").ClientFeatureSettings>;
 }

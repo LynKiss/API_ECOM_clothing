@@ -55,9 +55,14 @@ export type AdminSidebarSettings = {
   hiddenItemIds: string[];
 };
 
+export type ClientFeatureSettings = {
+  productRecommendationsEnabled: boolean;
+};
+
 const PAYMENT_SETTINGS_KEY = 'commerce_payments';
 const SMTP_SETTINGS_KEY = 'commerce_smtp';
 const ADMIN_SIDEBAR_SETTINGS_KEY = 'admin_sidebar';
+const CLIENT_FEATURE_SETTINGS_KEY = 'client_features';
 
 export const createDefaultPaymentSettings = (): PaymentSettings => ({
   cod: {
@@ -106,6 +111,10 @@ export const createDefaultAdminSidebarSettings = (): AdminSidebarSettings => ({
   hiddenItemIds: [],
 });
 
+export const createDefaultClientFeatureSettings = (): ClientFeatureSettings => ({
+  productRecommendationsEnabled: true,
+});
+
 @Injectable()
 export class SettingsService {
   private readonly logger = new Logger(SettingsService.name);
@@ -117,16 +126,20 @@ export class SettingsService {
   ) {}
 
   async getAdminCommerceSettings() {
-    const [payments, smtp] = await Promise.all([
+    const [payments, smtp, clientFeatures] = await Promise.all([
       this.getPaymentSettings(),
       this.getSmtpSettings(),
+      this.getClientFeatureSettings(),
     ]);
 
-    return { payments, smtp };
+    return { payments, smtp, clientFeatures };
   }
 
   async getPublicCommerceSettings() {
-    const payments = await this.getPaymentSettings();
+    const [payments, clientFeatures] = await Promise.all([
+      this.getPaymentSettings(),
+      this.getClientFeatureSettings(),
+    ]);
 
     const publicPayments = PAYMENT_METHOD_KEYS.reduce<PublicPaymentSettings>(
       (accumulator, key) => {
@@ -143,7 +156,7 @@ export class SettingsService {
       this.createDefaultPublicPaymentSettings(),
     );
 
-    return { payments: publicPayments };
+    return { payments: publicPayments, clientFeatures };
   }
 
   async getPaymentSettings() {
@@ -185,6 +198,20 @@ export class SettingsService {
   async saveAdminSidebarSettings(value: unknown) {
     const nextValue = this.normalizeAdminSidebarSettings(value);
     await this.saveJsonSetting(ADMIN_SIDEBAR_SETTINGS_KEY, nextValue);
+    return nextValue;
+  }
+
+  async getClientFeatureSettings() {
+    return this.getJsonSetting(
+      CLIENT_FEATURE_SETTINGS_KEY,
+      createDefaultClientFeatureSettings(),
+      (value) => this.normalizeClientFeatureSettings(value),
+    );
+  }
+
+  async saveClientFeatureSettings(value: unknown) {
+    const nextValue = this.normalizeClientFeatureSettings(value);
+    await this.saveJsonSetting(CLIENT_FEATURE_SETTINGS_KEY, nextValue);
     return nextValue;
   }
 
@@ -303,6 +330,18 @@ export class SettingsService {
             .filter(Boolean),
         ),
       ],
+    };
+  }
+
+  private normalizeClientFeatureSettings(value: unknown): ClientFeatureSettings {
+    const source = this.asRecord(value);
+    const defaults = createDefaultClientFeatureSettings();
+
+    return {
+      productRecommendationsEnabled: this.asBoolean(
+        source?.productRecommendationsEnabled,
+        defaults.productRecommendationsEnabled,
+      ),
     };
   }
 

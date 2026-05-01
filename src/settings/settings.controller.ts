@@ -53,4 +53,20 @@ export class SettingsController {
   ) {
     return this.settingsService.saveAdminSidebarSettings(body);
   }
+
+  @RequirePermissions('manage_settings')
+  @Get('admin/client-features')
+  @ResponseMessage('Get client feature settings')
+  getClientFeatureSettings() {
+    return this.settingsService.getClientFeatureSettings();
+  }
+
+  @RequirePermissions('manage_settings')
+  @Put('admin/client-features')
+  @ResponseMessage('Update client feature settings')
+  updateClientFeatureSettings(
+    @Body() body: { productRecommendationsEnabled?: boolean },
+  ) {
+    return this.settingsService.saveClientFeatureSettings(body);
+  }
 }

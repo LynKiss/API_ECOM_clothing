@@ -32,9 +32,13 @@ export type SmtpSettings = {
 export type AdminSidebarSettings = {
     hiddenItemIds: string[];
 };
+export type ClientFeatureSettings = {
+    productRecommendationsEnabled: boolean;
+};
 export declare const createDefaultPaymentSettings: () => PaymentSettings;
 export declare const createDefaultSmtpSettings: () => SmtpSettings;
 export declare const createDefaultAdminSidebarSettings: () => AdminSidebarSettings;
+export declare const createDefaultClientFeatureSettings: () => ClientFeatureSettings;
 export declare class SettingsService {
     private readonly settingsRepository;
     private readonly configService;
@@ -43,9 +47,11 @@ export declare class SettingsService {
     getAdminCommerceSettings(): Promise<{
         payments: PaymentSettings;
         smtp: SmtpSettings;
+        clientFeatures: ClientFeatureSettings;
     }>;
     getPublicCommerceSettings(): Promise<{
         payments: PublicPaymentSettings;
+        clientFeatures: ClientFeatureSettings;
     }>;
     getPaymentSettings(): Promise<PaymentSettings>;
     savePaymentSettings(value: unknown): Promise<PaymentSettings>;
@@ -53,6 +59,8 @@ export declare class SettingsService {
     saveSmtpSettings(value: unknown): Promise<SmtpSettings>;
     getAdminSidebarSettings(): Promise<AdminSidebarSettings>;
     saveAdminSidebarSettings(value: unknown): Promise<AdminSidebarSettings>;
+    getClientFeatureSettings(): Promise<ClientFeatureSettings>;
+    saveClientFeatureSettings(value: unknown): Promise<ClientFeatureSettings>;
     getResolvedSmtpConfig(): Promise<{
         host: string;
         port: number;
@@ -71,6 +79,7 @@ export declare class SettingsService {
     private normalizePaymentSettings;
     private normalizeSmtpSettings;
     private normalizeAdminSidebarSettings;
+    private normalizeClientFeatureSettings;
     private getJsonSetting;
     private saveJsonSetting;
     private asRecord;

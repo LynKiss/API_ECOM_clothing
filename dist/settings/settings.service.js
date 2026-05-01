@@ -13,7 +13,7 @@ var __param = (this && this.__param) || function (paramIndex, decorator) {
 };
 var SettingsService_1;
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.SettingsService = exports.createDefaultAdminSidebarSettings = exports.createDefaultSmtpSettings = exports.createDefaultPaymentSettings = exports.PAYMENT_METHOD_KEYS = void 0;
+exports.SettingsService = exports.createDefaultClientFeatureSettings = exports.createDefaultAdminSidebarSettings = exports.createDefaultSmtpSettings = exports.createDefaultPaymentSettings = exports.PAYMENT_METHOD_KEYS = void 0;
 const common_1 = require("@nestjs/common");
 const config_1 = require("@nestjs/config");
 const typeorm_1 = require("@nestjs/typeorm");
@@ -29,6 +29,7 @@ exports.PAYMENT_METHOD_KEYS = [
 const PAYMENT_SETTINGS_KEY = 'commerce_payments';
 const SMTP_SETTINGS_KEY = 'commerce_smtp';
 const ADMIN_SIDEBAR_SETTINGS_KEY = 'admin_sidebar';
+const CLIENT_FEATURE_SETTINGS_KEY = 'client_features';
 const createDefaultPaymentSettings = () => ({
     cod: {
         isActive: true,
@@ -76,6 +77,10 @@ const createDefaultAdminSidebarSettings = () => ({
     hiddenItemIds: [],
 });
 exports.createDefaultAdminSidebarSettings = createDefaultAdminSidebarSettings;
+const createDefaultClientFeatureSettings = () => ({
+    productRecommendationsEnabled: true,
+});
+exports.createDefaultClientFeatureSettings = createDefaultClientFeatureSettings;
 let SettingsService = SettingsService_1 = class SettingsService {
     settingsRepository;
     configService;
@@ -85,14 +90,18 @@ let SettingsService = SettingsService_1 = class SettingsService {
         this.configService = configService;
     }
     async getAdminCommerceSettings() {
-        const [payments, smtp] = await Promise.all([
+        const [payments, smtp, clientFeatures] = await Promise.all([
             this.getPaymentSettings(),
             this.getSmtpSettings(),
+            this.getClientFeatureSettings(),
         ]);
-        return { payments, smtp };
+        return { payments, smtp, clientFeatures };
     }
     async getPublicCommerceSettings() {
-        const payments = await this.getPaymentSettings();
+        const [payments, clientFeatures] = await Promise.all([
+            this.getPaymentSettings(),
+            this.getClientFeatureSettings(),
+        ]);
         const publicPayments = exports.PAYMENT_METHOD_KEYS.reduce((accumulator, key) => {
             const current = payments[key];
             accumulator[key] = {
@@ -104,7 +113,7 @@ let SettingsService = SettingsService_1 = class SettingsService {
             };
             return accumulator;
         }, this.createDefaultPublicPaymentSettings());
-        return { payments: publicPayments };
+        return { payments: publicPayments, clientFeatures };
     }
     async getPaymentSettings() {
         return this.getJsonSetting(PAYMENT_SETTINGS_KEY, (0, exports.createDefaultPaymentSettings)(), (value) => this.normalizePaymentSettings(value));
@@ -128,6 +137,14 @@ let SettingsService = SettingsService_1 = class SettingsService {
     async saveAdminSidebarSettings(value) {
         const nextValue = this.normalizeAdminSidebarSettings(value);
         await this.saveJsonSetting(ADMIN_SIDEBAR_SETTINGS_KEY, nextValue);
+        return nextValue;
+    }
+    async getClientFeatureSettings() {
+        return this.getJsonSetting(CLIENT_FEATURE_SETTINGS_KEY, (0, exports.createDefaultClientFeatureSettings)(), (value) => this.normalizeClientFeatureSettings(value));
+    }
+    async saveClientFeatureSettings(value) {
+        const nextValue = this.normalizeClientFeatureSettings(value);
+        await this.saveJsonSetting(CLIENT_FEATURE_SETTINGS_KEY, nextValue);
         return nextValue;
     }
     async getResolvedSmtpConfig() {
@@ -224,6 +241,13 @@ let SettingsService = SettingsService_1 = class SettingsService {
                     .map((id) => id.trim())
                     .filter(Boolean)),
             ],
+        };
+    }
+    normalizeClientFeatureSettings(value) {
+        const source = this.asRecord(value);
+        const defaults = (0, exports.createDefaultClientFeatureSettings)();
+        return {
+            productRecommendationsEnabled: this.asBoolean(source?.productRecommendationsEnabled, defaults.productRecommendationsEnabled),
         };
     }
     async getJsonSetting(key, fallback, normalize) {

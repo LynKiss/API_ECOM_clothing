@@ -39,6 +39,12 @@ let SettingsController = class SettingsController {
     updateAdminSidebarSettings(body) {
         return this.settingsService.saveAdminSidebarSettings(body);
     }
+    getClientFeatureSettings() {
+        return this.settingsService.getClientFeatureSettings();
+    }
+    updateClientFeatureSettings(body) {
+        return this.settingsService.saveClientFeatureSettings(body);
+    }
 };
 exports.SettingsController = SettingsController;
 __decorate([
@@ -92,6 +98,23 @@ __decorate([
     __metadata("design:paramtypes", [Object]),
     __metadata("design:returntype", void 0)
 ], SettingsController.prototype, "updateAdminSidebarSettings", null);
+__decorate([
+    (0, customize_1.RequirePermissions)('manage_settings'),
+    (0, common_1.Get)('admin/client-features'),
+    (0, customize_1.ResponseMessage)('Get client feature settings'),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", []),
+    __metadata("design:returntype", void 0)
+], SettingsController.prototype, "getClientFeatureSettings", null);
+__decorate([
+    (0, customize_1.RequirePermissions)('manage_settings'),
+    (0, common_1.Put)('admin/client-features'),
+    (0, customize_1.ResponseMessage)('Update client feature settings'),
+    __param(0, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", void 0)
+], SettingsController.prototype, "updateClientFeatureSettings", null);
 exports.SettingsController = SettingsController = __decorate([
     (0, common_1.Controller)('settings'),
     __metadata("design:paramtypes", [settings_service_1.SettingsService])
