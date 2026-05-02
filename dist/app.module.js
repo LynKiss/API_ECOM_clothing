@@ -12,6 +12,7 @@ const config_1 = require("@nestjs/config");
 const core_1 = require("@nestjs/core");
 const schedule_1 = require("@nestjs/schedule");
 const typeorm_1 = require("@nestjs/typeorm");
+const mongoose_1 = require("@nestjs/mongoose");
 const app_controller_1 = require("./app.controller");
 const app_service_1 = require("./app.service");
 const auth_module_1 = require("./auth/auth.module");
@@ -46,6 +47,7 @@ const audit_logs_module_1 = require("./audit-logs/audit-logs.module");
 const admin_search_module_1 = require("./admin-search/admin-search.module");
 const banners_module_1 = require("./banners/banners.module");
 const virtual_try_on_module_1 = require("./virtual-try-on/virtual-try-on.module");
+const super_admin_module_1 = require("./super-admin/super-admin.module");
 let AppModule = class AppModule {
 };
 exports.AppModule = AppModule;
@@ -57,8 +59,17 @@ exports.AppModule = AppModule = __decorate([
             }),
             schedule_1.ScheduleModule.forRoot(),
             typeorm_1.TypeOrmModule.forRootAsync(typeorm_config_1.typeOrmConfig),
+            mongoose_1.MongooseModule.forRootAsync({
+                connectionName: 'superAdminConnection',
+                inject: [config_1.ConfigService],
+                useFactory: (configService) => ({
+                    uri: configService.get('MONGO_SUPER_ADMIN_URI') ??
+                        'mongodb://127.0.0.1:27017/coolmate_super_admin',
+                }),
+            }),
             common_module_1.CommonModule,
             auth_module_1.AuthModule,
+            super_admin_module_1.SuperAdminModule,
             databases_module_1.DatabasesModule,
             permissions_module_1.PermissionsModule,
             categories_module_1.CategoriesModule,

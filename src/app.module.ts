@@ -1,8 +1,9 @@
 ﻿import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { MongooseModule } from '@nestjs/mongoose';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
@@ -37,6 +38,7 @@ import { AuditLogsModule } from './audit-logs/audit-logs.module';
 import { AdminSearchModule } from './admin-search/admin-search.module';
 import { BannersModule } from './banners/banners.module';
 import { VirtualTryOnModule } from './virtual-try-on/virtual-try-on.module';
+import { SuperAdminModule } from './super-admin/super-admin.module';
 
 @Module({
   imports: [
@@ -45,8 +47,18 @@ import { VirtualTryOnModule } from './virtual-try-on/virtual-try-on.module';
     }),
     ScheduleModule.forRoot(),
     TypeOrmModule.forRootAsync(typeOrmConfig),
+    MongooseModule.forRootAsync({
+      connectionName: 'superAdminConnection',
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService) => ({
+        uri:
+          configService.get<string>('MONGO_SUPER_ADMIN_URI') ??
+          'mongodb://127.0.0.1:27017/coolmate_super_admin',
+      }),
+    }),
     CommonModule,
     AuthModule,
+    SuperAdminModule,
     DatabasesModule,
     PermissionsModule,
     CategoriesModule,

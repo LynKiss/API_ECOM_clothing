@@ -53,7 +53,7 @@ export class DeliveryMethodsController {
   }
 
   @Get('admin/all')
-  @RequirePermissions('manage_settings')
+  @RequirePermissions('manage_delivery')
   @ResponseMessage('Get all delivery methods')
   async getAllDeliveryMethods() {
     const methods = await this.deliveryMethodsRepository.find({
@@ -63,7 +63,7 @@ export class DeliveryMethodsController {
   }
 
   @Post()
-  @RequirePermissions('manage_settings')
+  @RequirePermissions('manage_delivery')
   @ResponseMessage('Create delivery method')
   async createDeliveryMethod(@Body() dto: CreateDeliveryMethodDto) {
     if (dto.isDefault) {
@@ -83,7 +83,7 @@ export class DeliveryMethodsController {
   }
 
   @Patch(':id')
-  @RequirePermissions('manage_settings')
+  @RequirePermissions('manage_delivery')
   @ResponseMessage('Update delivery method')
   async updateDeliveryMethod(
     @Param('id') id: string,
@@ -109,7 +109,7 @@ export class DeliveryMethodsController {
   }
 
   @Delete(':id')
-  @RequirePermissions('manage_settings')
+  @RequirePermissions('manage_delivery')
   @HttpCode(200)
   @ResponseMessage('Delete delivery method')
   async deleteDeliveryMethod(@Param('id') id: string) {

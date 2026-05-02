@@ -253,6 +253,9 @@ let UsersService = class UsersService {
             throw new common_1.UnauthorizedException('Refresh token da het han');
         }
     }
+    async revokeActiveRefreshTokens(userId) {
+        await this.refreshTokensRepository.update({ userId, isRevoked: false }, { isRevoked: true });
+    }
     toPublicUser(user) {
         return {
             _id: user.userId,

@@ -15,7 +15,9 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.PermissionsController = void 0;
 const common_1 = require("@nestjs/common");
 const customize_1 = require("../decorator/customize");
+const update_user_permissions_dto_1 = require("./dto/update-user-permissions.dto");
 const update_role_permissions_dto_1 = require("./dto/update-role-permissions.dto");
+const permission_actor_guard_1 = require("./permission-actor.guard");
 const permissions_service_1 = require("./permissions.service");
 let PermissionsController = class PermissionsController {
     permissionsService;
@@ -25,22 +27,72 @@ let PermissionsController = class PermissionsController {
     getPermissions() {
         return this.permissionsService.findAll();
     }
+    getPermissionUsers(req) {
+        return this.permissionsService.findAssignableUsers(req.permissionActor);
+    }
+    getPermissionsByUser(userId) {
+        return this.permissionsService.findPermissionsByUser(userId);
+    }
+    updateUserPermissions(req, userId, updateUserPermissionsDto) {
+        return this.permissionsService.updateUserPermissions(req.permissionActor, userId, updateUserPermissionsDto, this.getIpAddress(req));
+    }
     getPermissionsByRole(role) {
         return this.permissionsService.findPermissionsByRole(role);
     }
     updateRolePermissions(role, updateRolePermissionsDto) {
         return this.permissionsService.updateRolePermissions(role, updateRolePermissionsDto);
     }
+    getIpAddress(req) {
+        const forwardedFor = req.headers['x-forwarded-for'];
+        if (Array.isArray(forwardedFor))
+            return forwardedFor[0];
+        if (forwardedFor)
+            return forwardedFor.split(',')[0]?.trim();
+        return req.ip ?? req.socket.remoteAddress;
+    }
 };
 exports.PermissionsController = PermissionsController;
 __decorate([
+    (0, customize_1.Public)(),
+    (0, common_1.UseGuards)(permission_actor_guard_1.PermissionActorGuard),
     (0, common_1.Get)(),
-    (0, customize_1.RequirePermissions)('manage_permissions'),
     (0, customize_1.ResponseMessage)('Get permissions list'),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", []),
     __metadata("design:returntype", void 0)
 ], PermissionsController.prototype, "getPermissions", null);
+__decorate([
+    (0, customize_1.Public)(),
+    (0, common_1.UseGuards)(permission_actor_guard_1.PermissionActorGuard),
+    (0, common_1.Get)('users'),
+    (0, customize_1.ResponseMessage)('Get permission users'),
+    __param(0, (0, common_1.Req)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", void 0)
+], PermissionsController.prototype, "getPermissionUsers", null);
+__decorate([
+    (0, customize_1.Public)(),
+    (0, common_1.UseGuards)(permission_actor_guard_1.PermissionActorGuard),
+    (0, common_1.Get)('users/:userId'),
+    (0, customize_1.ResponseMessage)('Get permissions by user'),
+    __param(0, (0, common_1.Param)('userId')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", void 0)
+], PermissionsController.prototype, "getPermissionsByUser", null);
+__decorate([
+    (0, customize_1.Public)(),
+    (0, common_1.UseGuards)(permission_actor_guard_1.PermissionActorGuard),
+    (0, common_1.Put)('users/:userId'),
+    (0, customize_1.ResponseMessage)('Update permissions by user'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Param)('userId')),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, update_user_permissions_dto_1.UpdateUserPermissionsDto]),
+    __metadata("design:returntype", void 0)
+], PermissionsController.prototype, "updateUserPermissions", null);
 __decorate([
     (0, common_1.Get)('roles/:role'),
     (0, customize_1.RequirePermissions)('manage_permissions'),

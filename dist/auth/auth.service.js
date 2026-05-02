@@ -50,7 +50,7 @@ let AuthService = class AuthService {
             this.setRefreshTokenCookie(response, refreshToken);
         }
         await this.usersService.updateUserRefreshToken(user._id, refreshToken, refreshExpiresAt);
-        const permissions = await this.loadPermissionsForRole(user.role);
+        const permissions = await this.loadPermissionsForUser(user);
         return {
             access_token: accessToken,
             access_token_expires_in: this.toExpiresInSeconds(this.getAccessTokenExpires()),
@@ -89,7 +89,7 @@ let AuthService = class AuthService {
             access_token_expires_in: this.toExpiresInSeconds(this.getAccessTokenExpires()),
             user: {
                 ...user,
-                permissions: await this.loadPermissionsForRole(user.role),
+                permissions: await this.loadPermissionsForUser(user),
             },
         };
     }
@@ -115,12 +115,11 @@ let AuthService = class AuthService {
             role: user.role,
         };
     }
-    async loadPermissionsForRole(role) {
-        if (!role?._id) {
+    async loadPermissionsForUser(user) {
+        if (!user.role?._id) {
             return [];
         }
-        const fullRole = await this.rolesService.findOne(role._id);
-        return fullRole.permissions;
+        return this.rolesService.findEffectivePermissionsForUser(user._id, user.role._id);
     }
     toAuthUser(user) {
         return {

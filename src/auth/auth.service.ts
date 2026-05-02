@@ -61,7 +61,7 @@ export class AuthService {
       refreshExpiresAt,
     );
 
-    const permissions = await this.loadPermissionsForRole(user.role);
+    const permissions = await this.loadPermissionsForUser(user);
 
     return {
       access_token: accessToken,
@@ -126,7 +126,7 @@ export class AuthService {
       ),
       user: {
         ...user,
-        permissions: await this.loadPermissionsForRole(user.role),
+        permissions: await this.loadPermissionsForUser(user),
       },
     };
   }
@@ -157,13 +157,15 @@ export class AuthService {
     };
   }
 
-  private async loadPermissionsForRole(role: IUserRoleSummary) {
-    if (!role?._id) {
+  private async loadPermissionsForUser(user: IUser) {
+    if (!user.role?._id) {
       return [];
     }
 
-    const fullRole = await this.rolesService.findOne(role._id);
-    return fullRole.permissions;
+    return this.rolesService.findEffectivePermissionsForUser(
+      user._id,
+      user.role._id,
+    );
   }
 
   private toAuthUser(user: UserEntity): IUser {

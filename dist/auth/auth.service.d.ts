@@ -68,7 +68,7 @@ export declare class AuthService {
     }>;
     createRefreshToken(payload: JwtPayload): string;
     private buildTokenPayload;
-    private loadPermissionsForRole;
+    private loadPermissionsForUser;
     private toAuthUser;
     private getAccessTokenExpires;
     private getRefreshTokenExpires;

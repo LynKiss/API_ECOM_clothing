@@ -89,6 +89,7 @@ export declare class UsersService {
     checkUserPassword(password: string, hash: string | null): Promise<boolean>;
     updateUserRefreshToken(userId: string, refreshToken: string | null, expiredAt?: Date): Promise<void>;
     validateStoredRefreshToken(userId: string, refreshToken: string): Promise<void>;
+    revokeActiveRefreshTokens(userId: string): Promise<void>;
     private toPublicUser;
     private toShippingAddressResponse;
     private toOrderSummaryResponse;

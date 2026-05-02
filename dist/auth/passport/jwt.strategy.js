@@ -26,15 +26,15 @@ let JwtStrategy = class JwtStrategy extends (0, passport_1.PassportStrategy)(pas
         this.rolesService = rolesService;
     }
     async validate(payload) {
-        const fullRole = payload.role?._id
-            ? await this.rolesService.findOne(payload.role._id)
-            : null;
+        const permissions = payload.role?._id
+            ? await this.rolesService.findEffectivePermissionsForUser(payload._id, payload.role._id)
+            : [];
         return {
             _id: payload._id,
             username: payload.username,
             email: payload.email,
             role: payload.role,
-            permissions: fullRole?.permissions ?? [],
+            permissions,
         };
     }
 };

@@ -294,6 +294,13 @@ export class UsersService {
     }
   }
 
+  async revokeActiveRefreshTokens(userId: string) {
+    await this.refreshTokensRepository.update(
+      { userId, isRevoked: false },
+      { isRevoked: true },
+    );
+  }
+
   private toPublicUser(user: UserEntity): IUser {
     return {
       _id: user.userId,

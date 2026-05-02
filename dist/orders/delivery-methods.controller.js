@@ -126,7 +126,7 @@ __decorate([
 ], DeliveryMethodsController.prototype, "getDeliveryMethods", null);
 __decorate([
     (0, common_1.Get)('admin/all'),
-    (0, customize_1.RequirePermissions)('manage_settings'),
+    (0, customize_1.RequirePermissions)('manage_delivery'),
     (0, customize_1.ResponseMessage)('Get all delivery methods'),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", []),
@@ -134,7 +134,7 @@ __decorate([
 ], DeliveryMethodsController.prototype, "getAllDeliveryMethods", null);
 __decorate([
     (0, common_1.Post)(),
-    (0, customize_1.RequirePermissions)('manage_settings'),
+    (0, customize_1.RequirePermissions)('manage_delivery'),
     (0, customize_1.ResponseMessage)('Create delivery method'),
     __param(0, (0, common_1.Body)()),
     __metadata("design:type", Function),
@@ -143,7 +143,7 @@ __decorate([
 ], DeliveryMethodsController.prototype, "createDeliveryMethod", null);
 __decorate([
     (0, common_1.Patch)(':id'),
-    (0, customize_1.RequirePermissions)('manage_settings'),
+    (0, customize_1.RequirePermissions)('manage_delivery'),
     (0, customize_1.ResponseMessage)('Update delivery method'),
     __param(0, (0, common_1.Param)('id')),
     __param(1, (0, common_1.Body)()),
@@ -153,7 +153,7 @@ __decorate([
 ], DeliveryMethodsController.prototype, "updateDeliveryMethod", null);
 __decorate([
     (0, common_1.Delete)(':id'),
-    (0, customize_1.RequirePermissions)('manage_settings'),
+    (0, customize_1.RequirePermissions)('manage_delivery'),
     (0, common_1.HttpCode)(200),
     (0, customize_1.ResponseMessage)('Delete delivery method'),
     __param(0, (0, common_1.Param)('id')),
