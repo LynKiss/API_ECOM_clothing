@@ -48,6 +48,7 @@ const admin_search_module_1 = require("./admin-search/admin-search.module");
 const banners_module_1 = require("./banners/banners.module");
 const virtual_try_on_module_1 = require("./virtual-try-on/virtual-try-on.module");
 const super_admin_module_1 = require("./super-admin/super-admin.module");
+const super_admin_sync_module_1 = require("./super-admin-sync/super-admin-sync.module");
 let AppModule = class AppModule {
 };
 exports.AppModule = AppModule;
@@ -70,6 +71,7 @@ exports.AppModule = AppModule = __decorate([
             common_module_1.CommonModule,
             auth_module_1.AuthModule,
             super_admin_module_1.SuperAdminModule,
+            super_admin_sync_module_1.SuperAdminSyncModule,
             databases_module_1.DatabasesModule,
             permissions_module_1.PermissionsModule,
             categories_module_1.CategoriesModule,

@@ -39,6 +39,7 @@ import { AdminSearchModule } from './admin-search/admin-search.module';
 import { BannersModule } from './banners/banners.module';
 import { VirtualTryOnModule } from './virtual-try-on/virtual-try-on.module';
 import { SuperAdminModule } from './super-admin/super-admin.module';
+import { SuperAdminSyncModule } from './super-admin-sync/super-admin-sync.module';
 
 @Module({
   imports: [
@@ -59,6 +60,7 @@ import { SuperAdminModule } from './super-admin/super-admin.module';
     CommonModule,
     AuthModule,
     SuperAdminModule,
+    SuperAdminSyncModule,
     DatabasesModule,
     PermissionsModule,
     CategoriesModule,
