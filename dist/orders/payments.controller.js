@@ -96,7 +96,7 @@ __decorate([
     __metadata("design:returntype", void 0)
 ], PaymentsController.prototype, "verifyMomoRedirect", null);
 __decorate([
-    (0, customize_1.RequirePermissions)('manage_orders'),
+    (0, customize_1.RequirePermissions)('manage_payments'),
     (0, common_1.Get)('admin/transactions'),
     (0, customize_1.ResponseMessage)('Get all payment transactions'),
     __param(0, (0, common_1.Query)('page')),

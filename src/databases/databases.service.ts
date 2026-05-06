@@ -15,6 +15,7 @@ const CORE_PERMISSIONS = [
   { permissionKey: 'manage_inventory', permissionName: 'Quáº£n lÃ½ kho hÃ ng' },
   { permissionKey: 'manage_users', permissionName: 'Quáº£n lÃ½ ngÆ°á»i dÃ¹ng' },
   { permissionKey: 'manage_discounts', permissionName: 'Quáº£n lÃ½ khuyáº¿n mÃ£i' },
+  { permissionKey: 'manage_payments', permissionName: 'Quan ly thanh toan' },
   { permissionKey: 'manage_reports', permissionName: 'Quáº£n lÃ½ bÃ¡o cÃ¡o' },
   { permissionKey: 'manage_settings', permissionName: 'Quáº£n lÃ½ cÃ i Ä‘áº·t há»‡ thá»‘ng' },
   { permissionKey: 'manage_delivery', permissionName: 'Quáº£n lÃ½ váº­n chuyá»ƒn' },
@@ -54,6 +55,7 @@ const CORE_PERMISSIONS = [
 // VIEWER: chá»‰ view_*
 const STAFF_PERMISSIONS = [
   'manage_orders',
+  'manage_payments',
   'manage_products',
   'manage_inventory',
   'manage_categories',

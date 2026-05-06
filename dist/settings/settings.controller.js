@@ -56,7 +56,7 @@ __decorate([
     __metadata("design:returntype", void 0)
 ], SettingsController.prototype, "getPublicCommerceSettings", null);
 __decorate([
-    (0, customize_1.RequirePermissions)('manage_settings'),
+    (0, customize_1.RequirePermissions)('manage_payments'),
     (0, common_1.Get)('admin/commerce'),
     (0, customize_1.ResponseMessage)('Get commerce settings'),
     __metadata("design:type", Function),
@@ -64,7 +64,7 @@ __decorate([
     __metadata("design:returntype", void 0)
 ], SettingsController.prototype, "getAdminCommerceSettings", null);
 __decorate([
-    (0, customize_1.RequirePermissions)('manage_settings'),
+    (0, customize_1.RequirePermissions)('manage_payments'),
     (0, common_1.Put)('admin/payments'),
     (0, customize_1.ResponseMessage)('Update payment settings'),
     __param(0, (0, common_1.Body)()),
@@ -73,7 +73,7 @@ __decorate([
     __metadata("design:returntype", void 0)
 ], SettingsController.prototype, "updatePaymentSettings", null);
 __decorate([
-    (0, customize_1.RequirePermissions)('manage_settings'),
+    (0, customize_1.RequirePermissions)('manage_payments'),
     (0, common_1.Put)('admin/smtp'),
     (0, customize_1.ResponseMessage)('Update SMTP settings'),
     __param(0, (0, common_1.Body)()),
