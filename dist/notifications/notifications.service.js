@@ -169,30 +169,32 @@ let NotificationsService = NotificationsService_1 = class NotificationsService {
         if (!user) {
             return null;
         }
+        const shortId = `#${orderId.slice(0, 8).toUpperCase()}`;
         return Promise.all([
             this.createNotification({
                 userId,
                 channel: notification_entity_1.NotificationChannel.SYSTEM,
-                title: 'Don hang da duoc tao',
-                message: `Don hang ${orderId} da duoc tao thanh cong.`,
+                title: 'Đơn hàng đã được tạo',
+                message: `Đơn hàng ${shortId} của bạn đã được tạo thành công.`,
                 metadata: { orderId, type: 'order_created' },
             }),
             this.createNotification({
                 userId,
                 email: user.email,
                 channel: notification_entity_1.NotificationChannel.EMAIL,
-                title: 'Xac nhan don hang',
-                message: `He thong da ghi nhan don hang ${orderId} cua ban.`,
+                title: 'Xác nhận đơn hàng',
+                message: `Hệ thống đã ghi nhận đơn hàng ${shortId} của bạn.`,
                 metadata: { orderId, type: 'order_created' },
             }),
         ]);
     }
     async sendAdminOrderCreatedNotification(input) {
+        const shortId = `#${input.orderId.slice(0, 8).toUpperCase()}`;
         return this.createNotification({
             userId: null,
             channel: notification_entity_1.NotificationChannel.SYSTEM,
-            title: 'Co don hang moi',
-            message: `Don ${input.orderId} tu ${input.fullName || input.phone} co tong tien ${input.totalPayment}.`,
+            title: 'Có đơn hàng mới',
+            message: `Đơn ${shortId} từ ${input.fullName || input.phone} — tổng tiền ${input.totalPayment}.`,
             metadata: {
                 orderId: input.orderId,
                 fullName: input.fullName,
@@ -207,20 +209,22 @@ let NotificationsService = NotificationsService_1 = class NotificationsService {
         if (!user) {
             return null;
         }
+        const shortId = `#${orderId.slice(0, 8).toUpperCase()}`;
+        const statusLabel = translateOrderStatus(status);
         return Promise.all([
             this.createNotification({
                 userId,
                 channel: notification_entity_1.NotificationChannel.SYSTEM,
-                title: 'Don hang da thay doi trang thai',
-                message: `Don hang ${orderId} hien dang o trang thai ${status}.`,
+                title: 'Đơn hàng đã thay đổi trạng thái',
+                message: `Đơn hàng ${shortId} hiện đang ở trạng thái ${statusLabel}.`,
                 metadata: { orderId, status, type: 'order_status_changed' },
             }),
             this.createNotification({
                 userId,
                 email: user.email,
                 channel: notification_entity_1.NotificationChannel.EMAIL,
-                title: 'Cap nhat trang thai don hang',
-                message: `Don hang ${orderId} da chuyen sang trang thai ${status}.`,
+                title: 'Cập nhật trạng thái đơn hàng',
+                message: `Đơn hàng ${shortId} đã chuyển sang trạng thái ${statusLabel}.`,
                 metadata: { orderId, status, type: 'order_status_changed' },
             }),
         ]);
@@ -230,20 +234,22 @@ let NotificationsService = NotificationsService_1 = class NotificationsService {
         if (!user) {
             return null;
         }
+        const shortId = `#${orderId.slice(0, 8).toUpperCase()}`;
+        const paymentLabel = translatePaymentStatus(paymentStatus);
         return Promise.all([
             this.createNotification({
                 userId,
                 channel: notification_entity_1.NotificationChannel.SYSTEM,
-                title: 'Cap nhat thanh toan',
-                message: `Thanh toan ${provider} cho don ${orderId} da o trang thai ${paymentStatus}.`,
+                title: 'Cập nhật thanh toán',
+                message: `Thanh toán ${provider} cho đơn ${shortId} — trạng thái: ${paymentLabel}.`,
                 metadata: { orderId, paymentStatus, provider, type: 'payment_status' },
             }),
             this.createNotification({
                 userId,
                 email: user.email,
                 channel: notification_entity_1.NotificationChannel.EMAIL,
-                title: 'Cap nhat thanh toan don hang',
-                message: `Don hang ${orderId} co ket qua thanh toan ${paymentStatus} qua ${provider}.`,
+                title: 'Cập nhật thanh toán đơn hàng',
+                message: `Đơn hàng ${shortId} — kết quả thanh toán ${paymentLabel} qua ${provider}.`,
                 metadata: { orderId, paymentStatus, provider, type: 'payment_status' },
             }),
         ]);
@@ -339,4 +345,27 @@ exports.NotificationsService = NotificationsService = NotificationsService_1 = _
         typeorm_2.Repository,
         settings_service_1.SettingsService])
 ], NotificationsService);
+function translateOrderStatus(status) {
+    const map = {
+        pending: 'chờ xử lý',
+        confirmed: 'đã xác nhận',
+        processing: 'đang xử lý',
+        shipping: 'đang giao',
+        delivered: 'đã giao',
+        partial_delivered: 'giao một phần',
+        cancelled: 'đã hủy',
+        returned: 'đã hoàn',
+        backordered: 'chờ hàng',
+    };
+    return map[status] ?? status;
+}
+function translatePaymentStatus(status) {
+    const map = {
+        paid: 'đã thanh toán',
+        unpaid: 'chưa thanh toán',
+        failed: 'thất bại',
+        refunded: 'đã hoàn tiền',
+    };
+    return map[status] ?? status;
+}
 //# sourceMappingURL=notifications.service.js.map

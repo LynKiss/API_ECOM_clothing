@@ -150,6 +150,7 @@ export declare class OrdersController {
             updatedAt: Date;
         }[];
     }>;
+    getOrderStats(): Promise<Record<string, number>>;
     getOrderDetail(currentUser: IUser, id: string): Promise<{
         id: string;
         status: import("./entities/order.entity").OrderStatus;

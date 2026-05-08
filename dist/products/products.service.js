@@ -528,14 +528,13 @@ let ProductsService = class ProductsService {
             variant.isActive = dto.isActive;
         await this.dataSource.transaction(async (em) => {
             await em.save(product_variant_entity_1.ProductVariantEntity, variant);
-            const stockDelta = variant.stockQuantity - previousStockQuantity;
-            if (stockDelta !== 0) {
-                product.quantityAvailable += stockDelta;
-                if (product.quantityAvailable < 0) {
-                    throw new common_1.BadRequestException('Quantity exceeds available stock');
-                }
-                await em.save(product_entity_1.ProductEntity, product);
-            }
+            const allVariants = await em.find(product_variant_entity_1.ProductVariantEntity, {
+                where: { productId },
+            });
+            product.quantityAvailable = allVariants
+                .filter((v) => v.isActive)
+                .reduce((s, v) => s + v.stockQuantity, 0);
+            await em.save(product_entity_1.ProductEntity, product);
         });
         return this.getVariantDetail(productId, variantId);
     }

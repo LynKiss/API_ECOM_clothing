@@ -80,6 +80,7 @@ export declare class OrdersService {
     private calculateDiscountAmount;
     private validateDiscountForCheckout;
     private buildOrderDetail;
+    getOrderStats(): Promise<Record<string, number>>;
     private toOrderSummary;
     private notifyAdminsAboutNewOrder;
     private isValidAdminStatusTransition;

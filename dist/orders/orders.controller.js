@@ -41,6 +41,9 @@ let OrdersController = class OrdersController {
     getOrders(query) {
         return this.ordersService.findAllOrders(query);
     }
+    getOrderStats() {
+        return this.ordersService.getOrderStats();
+    }
     getOrderDetail(currentUser, id) {
         return this.ordersService.findOrderDetail(currentUser, id);
     }
@@ -106,6 +109,14 @@ __decorate([
     __metadata("design:paramtypes", [query_orders_dto_1.QueryOrdersDto]),
     __metadata("design:returntype", void 0)
 ], OrdersController.prototype, "getOrders", null);
+__decorate([
+    (0, common_1.Get)('admin/stats'),
+    (0, customize_1.RequirePermissions)('manage_orders'),
+    (0, customize_1.ResponseMessage)('Get order stats'),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", []),
+    __metadata("design:returntype", void 0)
+], OrdersController.prototype, "getOrderStats", null);
 __decorate([
     (0, common_1.Get)(':id'),
     (0, customize_1.ResponseMessage)('Get order detail'),

@@ -125,7 +125,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
     async ensureUserExists(userId) {
         const user = await this.usersRepository.findOneBy({ userId });
         if (!user) {
-            throw new common_1.UnauthorizedException('Nguoi dung khong ton tai');
+            throw new common_1.UnauthorizedException('Người dùng không tồn tại');
         }
         return user;
     }
@@ -407,6 +407,18 @@ let OrdersService = OrdersService_1 = class OrdersService {
                 order: { createdAt: 'ASC', historyId: 'ASC' },
             }),
         ]);
+        const changedByIds = [
+            ...new Set(history.map((e) => e.changedBy).filter(Boolean)),
+        ];
+        const usersMap = new Map();
+        if (changedByIds.length > 0) {
+            const users = await this.usersRepository.find({
+                where: { userId: (0, typeorm_2.In)(changedByIds) },
+                select: ['userId', 'username'],
+            });
+            for (const u of users)
+                usersMap.set(u.userId, u.username);
+        }
         return {
             id: order.orderId,
             status: order.orderStatus,
@@ -441,11 +453,22 @@ let OrdersService = OrdersService_1 = class OrdersService {
                 id: entry.historyId,
                 oldStatus: entry.oldStatus,
                 newStatus: entry.newStatus,
-                changedBy: entry.changedBy,
+                changedBy: entry.changedBy
+                    ? (usersMap.get(entry.changedBy) ?? 'admin')
+                    : null,
                 note: entry.note,
                 createdAt: entry.createdAt,
             })),
         };
+    }
+    async getOrderStats() {
+        const rows = await this.ordersRepository
+            .createQueryBuilder('o')
+            .select('o.orderStatus', 'status')
+            .addSelect('COUNT(*)', 'count')
+            .groupBy('o.orderStatus')
+            .getRawMany();
+        return Object.fromEntries(rows.map((r) => [r.status, Number(r.count)]));
     }
     toOrderSummary(order) {
         return {
@@ -707,7 +730,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
                 oldStatus: null,
                 newStatus: isBackorder ? order_entity_1.OrderStatus.BACKORDERED : order_entity_1.OrderStatus.PENDING,
                 changedBy: null,
-                note: 'Guest order created',
+                note: 'Đơn hàng khách đã được tạo',
             }));
         }));
         const created = await this.findAnyOrder(orderId);
@@ -929,8 +952,8 @@ let OrdersService = OrdersService_1 = class OrdersService {
                     : order_entity_1.OrderStatus.PENDING,
                 changedBy: userId,
                 note: isBackorder
-                    ? 'Order created (backordered — chờ nhập kho)'
-                    : 'Order created',
+                    ? 'Đơn hàng đặt trước — chờ nhập kho'
+                    : 'Đơn hàng đã được tạo',
             });
             await transactionalHistoryRepository.save(history);
             await transactionalCartItemsRepository.delete({ cartId: cart.cartId });
@@ -1065,7 +1088,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
                 oldStatus: previousStatus,
                 newStatus: order_entity_1.OrderStatus.CANCELLED,
                 changedBy: userId,
-                note: 'Order cancelled by user',
+                note: 'Khách hàng đã hủy đơn',
             });
             await transactionalHistoryRepository.save(history);
         });
@@ -1154,7 +1177,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
                         oldStatus: previousStatus,
                         newStatus: nextStatus,
                         changedBy: currentUser._id,
-                        note: updateOrderStatusDto.note ?? 'Backorder cancelled',
+                        note: updateOrderStatusDto.note ?? 'Đã hủy đơn chờ hàng',
                     });
                     await transactionalHistoryRepository.save(history);
                     return;
@@ -1239,7 +1262,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
                 oldStatus: previousStatus,
                 newStatus: nextStatus,
                 changedBy: currentUser._id,
-                note: updateOrderStatusDto.note ?? 'Order status updated by admin',
+                note: updateOrderStatusDto.note ?? 'Cập nhật trạng thái bởi admin',
             });
             await transactionalHistoryRepository.save(history);
         });
