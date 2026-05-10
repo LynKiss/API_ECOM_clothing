@@ -35,7 +35,7 @@ export declare class SupportBotService {
         source: "ai";
         handoffSuggested: boolean;
         products: SupportBotProductSuggestion[];
-        intent: "shipping" | "returns" | "greeting" | "payment" | "product_search" | "product_recommendation" | "cart_add" | "my_orders" | "order_lookup" | "general";
+        intent: "returns" | "greeting" | "shipping" | "payment" | "product_search" | "product_recommendation" | "cart_add" | "my_orders" | "order_lookup" | "general";
         cartChanged: boolean;
     }>;
     private normalizeHistory;

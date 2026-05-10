@@ -503,7 +503,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
             [order_entity_1.OrderStatus.BACKORDERED]: [order_entity_1.OrderStatus.PENDING, order_entity_1.OrderStatus.CANCELLED],
             [order_entity_1.OrderStatus.PENDING]: [order_entity_1.OrderStatus.CONFIRMED, order_entity_1.OrderStatus.CANCELLED],
             [order_entity_1.OrderStatus.CONFIRMED]: [order_entity_1.OrderStatus.PROCESSING, order_entity_1.OrderStatus.CANCELLED],
-            [order_entity_1.OrderStatus.PROCESSING]: [order_entity_1.OrderStatus.SHIPPING, order_entity_1.OrderStatus.CANCELLED],
+            [order_entity_1.OrderStatus.PROCESSING]: [order_entity_1.OrderStatus.SHIPPING, order_entity_1.OrderStatus.DELIVERED, order_entity_1.OrderStatus.CANCELLED],
             [order_entity_1.OrderStatus.SHIPPING]: [
                 order_entity_1.OrderStatus.DELIVERED,
                 order_entity_1.OrderStatus.RETURNED,
@@ -2041,6 +2041,66 @@ let OrdersService = OrdersService_1 = class OrdersService {
             await em.save(return_entity_1.ReturnEntity, returnRequest);
         });
         return this.returnsRepository.findOneBy({ returnId });
+    }
+    async confirmPayment(currentUser, orderId) {
+        await this.ensureUserExists(currentUser._id);
+        const order = await this.findAnyOrder(orderId);
+        if (order.paymentStatus === order_entity_1.PaymentStatus.PAID) {
+            throw new common_1.BadRequestException('Đơn hàng đã được thanh toán');
+        }
+        if (order.paymentMethod === order_entity_1.PaymentMethod.COD) {
+            throw new common_1.BadRequestException('COD tự động ghi nhận khi giao — không cần xác nhận thủ công');
+        }
+        order.paymentStatus = order_entity_1.PaymentStatus.PAID;
+        await this.ordersRepository.save(order);
+        const tx = this.paymentTransactionsRepository.create({
+            orderId: order.orderId,
+            userId: order.userId,
+            provider: order.paymentMethod,
+            transactionRef: `manual-${Date.now()}`,
+            transactionStatus: payment_transaction_entity_1.PaymentTransactionStatus.SUCCESS,
+            paymentStatus: order_entity_1.PaymentStatus.PAID,
+            amount: order.totalPayment,
+            gatewayCode: 'MANUAL',
+            gatewayMessage: `Xác nhận thủ công bởi admin ${currentUser._id}`,
+            rawPayload: { confirmedBy: currentUser._id, confirmedAt: new Date().toISOString() },
+        });
+        await this.paymentTransactionsRepository.save(tx);
+        await this.notificationsService.sendPaymentNotification(order.userId, orderId, order_entity_1.PaymentStatus.PAID, order.paymentMethod);
+        return this.buildOrderDetail(await this.findAnyOrder(orderId));
+    }
+    async confirmReceivedByCustomer(currentUser, orderId) {
+        await this.ensureUserExists(currentUser._id);
+        const order = await this.findOrderDetail(currentUser, orderId);
+        if (order.orderStatus !== order_entity_1.OrderStatus.SHIPPING) {
+            throw new common_1.BadRequestException('Chỉ có thể xác nhận nhận hàng khi đơn đang được giao');
+        }
+        await this.ordersRepository.manager.transaction(async (em) => {
+            const transactionalProductsRepo = em.getRepository(product_entity_1.ProductEntity);
+            const transactionalOrderItemsRepo = em.getRepository(order_item_entity_1.OrderItemEntity);
+            await this.releaseReservedOnDelivered(order.orderId, transactionalProductsRepo, transactionalOrderItemsRepo);
+            const dbOrder = await em.getRepository(order_entity_1.OrderEntity).findOneBy({ orderId: order.orderId });
+            if (!dbOrder)
+                return;
+            dbOrder.orderStatus = order_entity_1.OrderStatus.DELIVERED;
+            if (dbOrder.paymentMethod === order_entity_1.PaymentMethod.COD) {
+                dbOrder.paymentStatus = order_entity_1.PaymentStatus.PAID;
+            }
+            await em.save(order_entity_1.OrderEntity, dbOrder);
+            await em.save(order_status_history_entity_1.OrderStatusHistoryEntity, em.create(order_status_history_entity_1.OrderStatusHistoryEntity, {
+                orderId: order.orderId,
+                oldStatus: order_entity_1.OrderStatus.SHIPPING,
+                newStatus: order_entity_1.OrderStatus.DELIVERED,
+                changedBy: currentUser._id,
+                note: 'Khách hàng xác nhận đã nhận hàng',
+            }));
+        });
+        const updated = await this.findAnyOrder(orderId);
+        await this.notificationsService.sendOrderStatusNotification(updated.userId, orderId, order_entity_1.OrderStatus.DELIVERED);
+        if (updated.userId) {
+            void this.membershipService.recalculateAndReward(updated.userId);
+        }
+        return this.buildOrderDetail(updated);
     }
 };
 exports.OrdersService = OrdersService;

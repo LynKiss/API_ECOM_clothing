@@ -297,7 +297,7 @@ export declare class OrdersService {
         orderId: string;
         mode: OrderTrackingMode;
         gpsSignalFresh: boolean;
-        activeSource: "none" | "manual" | "gps";
+        activeSource: "manual" | "gps" | "none";
         activeLocation: {
             latitude: number;
             longitude: number;
@@ -334,7 +334,7 @@ export declare class OrdersService {
         orderId: string;
         mode: OrderTrackingMode;
         gpsSignalFresh: boolean;
-        activeSource: "none" | "manual" | "gps";
+        activeSource: "manual" | "gps" | "none";
         activeLocation: {
             latitude: number;
             longitude: number;
@@ -371,7 +371,7 @@ export declare class OrdersService {
         orderId: string;
         mode: OrderTrackingMode;
         gpsSignalFresh: boolean;
-        activeSource: "none" | "manual" | "gps";
+        activeSource: "manual" | "gps" | "none";
         activeLocation: {
             latitude: number;
             longitude: number;
@@ -408,7 +408,7 @@ export declare class OrdersService {
         orderId: string;
         mode: OrderTrackingMode;
         gpsSignalFresh: boolean;
-        activeSource: "none" | "manual" | "gps";
+        activeSource: "manual" | "gps" | "none";
         activeLocation: {
             latitude: number;
             longitude: number;
@@ -659,4 +659,82 @@ export declare class OrdersService {
         }[];
     }>;
     inspectReturn(currentUser: IUser, returnId: string, decision: ReturnInspectionStatus, note?: string): Promise<ReturnEntity | null>;
+    confirmPayment(currentUser: IUser, orderId: string): Promise<{
+        id: string;
+        status: OrderStatus;
+        paymentMethod: PaymentMethod;
+        paymentStatus: PaymentStatus;
+        shippingAddressId: string | null;
+        deliveryId: string | null;
+        subtotalAmount: string;
+        discountAmount: string;
+        deliveryCost: string;
+        totalPayment: string;
+        totalQuantity: number;
+        note: string | null;
+        fullName: string;
+        phone: string;
+        address: string;
+        createdAt: Date;
+        updatedAt: Date;
+        items: {
+            id: string;
+            productId: string;
+            variantId: string | null;
+            sku: string | null;
+            colorName: string | null;
+            sizeName: string | null;
+            productName: string;
+            quantity: number;
+            unitPrice: string;
+            lineTotal: string;
+        }[];
+        history: {
+            id: string;
+            oldStatus: OrderStatus | null;
+            newStatus: OrderStatus;
+            changedBy: string | null;
+            note: string | null;
+            createdAt: Date;
+        }[];
+    }>;
+    confirmReceivedByCustomer(currentUser: IUser, orderId: string): Promise<{
+        id: string;
+        status: OrderStatus;
+        paymentMethod: PaymentMethod;
+        paymentStatus: PaymentStatus;
+        shippingAddressId: string | null;
+        deliveryId: string | null;
+        subtotalAmount: string;
+        discountAmount: string;
+        deliveryCost: string;
+        totalPayment: string;
+        totalQuantity: number;
+        note: string | null;
+        fullName: string;
+        phone: string;
+        address: string;
+        createdAt: Date;
+        updatedAt: Date;
+        items: {
+            id: string;
+            productId: string;
+            variantId: string | null;
+            sku: string | null;
+            colorName: string | null;
+            sizeName: string | null;
+            productName: string;
+            quantity: number;
+            unitPrice: string;
+            lineTotal: string;
+        }[];
+        history: {
+            id: string;
+            oldStatus: OrderStatus | null;
+            newStatus: OrderStatus;
+            changedBy: string | null;
+            note: string | null;
+            createdAt: Date;
+        }[];
+    }>;
 }

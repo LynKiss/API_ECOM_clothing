@@ -628,7 +628,7 @@ export class OrdersService {
       [OrderStatus.BACKORDERED]: [OrderStatus.PENDING, OrderStatus.CANCELLED],
       [OrderStatus.PENDING]: [OrderStatus.CONFIRMED, OrderStatus.CANCELLED],
       [OrderStatus.CONFIRMED]: [OrderStatus.PROCESSING, OrderStatus.CANCELLED],
-      [OrderStatus.PROCESSING]: [OrderStatus.SHIPPING, OrderStatus.CANCELLED],
+      [OrderStatus.PROCESSING]: [OrderStatus.SHIPPING, OrderStatus.DELIVERED, OrderStatus.CANCELLED],
       [OrderStatus.SHIPPING]: [
         OrderStatus.DELIVERED,
         OrderStatus.RETURNED,
@@ -2797,5 +2797,103 @@ export class OrdersService {
     });
 
     return this.returnsRepository.findOneBy({ returnId });
+  }
+
+  /**
+   * Admin xác nhận thanh toán thủ công cho đơn non-COD (BANK_TRANSFER, online chưa tự ghi nhận).
+   */
+  async confirmPayment(currentUser: IUser, orderId: string) {
+    await this.ensureUserExists(currentUser._id);
+    const order = await this.findAnyOrder(orderId);
+
+    if (order.paymentStatus === PaymentStatus.PAID) {
+      throw new BadRequestException('Đơn hàng đã được thanh toán');
+    }
+    if (order.paymentMethod === PaymentMethod.COD) {
+      throw new BadRequestException('COD tự động ghi nhận khi giao — không cần xác nhận thủ công');
+    }
+
+    order.paymentStatus = PaymentStatus.PAID;
+    await this.ordersRepository.save(order);
+
+    const tx = this.paymentTransactionsRepository.create({
+      orderId: order.orderId,
+      userId: order.userId,
+      provider: order.paymentMethod,
+      transactionRef: `manual-${Date.now()}`,
+      transactionStatus: PaymentTransactionStatus.SUCCESS,
+      paymentStatus: PaymentStatus.PAID,
+      amount: order.totalPayment,
+      gatewayCode: 'MANUAL',
+      gatewayMessage: `Xác nhận thủ công bởi admin ${currentUser._id}`,
+      rawPayload: { confirmedBy: currentUser._id, confirmedAt: new Date().toISOString() },
+    });
+    await this.paymentTransactionsRepository.save(tx);
+
+    await this.notificationsService.sendPaymentNotification(
+      order.userId,
+      orderId,
+      PaymentStatus.PAID,
+      order.paymentMethod,
+    );
+
+    return this.buildOrderDetail(await this.findAnyOrder(orderId));
+  }
+
+  /**
+   * Khách hàng xác nhận đã nhận hàng (khi đơn đang SHIPPING).
+   * Chuyển → DELIVERED + giải phóng reserved + COD tự PAID.
+   */
+  async confirmReceivedByCustomer(currentUser: IUser, orderId: string) {
+    await this.ensureUserExists(currentUser._id);
+    const order = await this.findOrderDetail(currentUser, orderId);
+
+    if (order.orderStatus !== OrderStatus.SHIPPING) {
+      throw new BadRequestException('Chỉ có thể xác nhận nhận hàng khi đơn đang được giao');
+    }
+
+    await this.ordersRepository.manager.transaction(async (em) => {
+      const transactionalProductsRepo = em.getRepository(ProductEntity);
+      const transactionalOrderItemsRepo = em.getRepository(OrderItemEntity);
+
+      await this.releaseReservedOnDelivered(
+        order.orderId,
+        transactionalProductsRepo,
+        transactionalOrderItemsRepo,
+      );
+
+      const dbOrder = await em.getRepository(OrderEntity).findOneBy({ orderId: order.orderId });
+      if (!dbOrder) return;
+
+      dbOrder.orderStatus = OrderStatus.DELIVERED;
+      if (dbOrder.paymentMethod === PaymentMethod.COD) {
+        dbOrder.paymentStatus = PaymentStatus.PAID;
+      }
+
+      await em.save(OrderEntity, dbOrder);
+      await em.save(
+        OrderStatusHistoryEntity,
+        em.create(OrderStatusHistoryEntity, {
+          orderId: order.orderId,
+          oldStatus: OrderStatus.SHIPPING,
+          newStatus: OrderStatus.DELIVERED,
+          changedBy: currentUser._id,
+          note: 'Khách hàng xác nhận đã nhận hàng',
+        }),
+      );
+    });
+
+    const updated = await this.findAnyOrder(orderId);
+    await this.notificationsService.sendOrderStatusNotification(
+      updated.userId,
+      orderId,
+      OrderStatus.DELIVERED,
+    );
+
+    if (updated.userId) {
+      void this.membershipService.recalculateAndReward(updated.userId);
+    }
+
+    return this.buildOrderDetail(updated);
   }
 }

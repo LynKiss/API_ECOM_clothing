@@ -53,6 +53,12 @@ let OrdersController = class OrdersController {
     cancelOrder(currentUser, id) {
         return this.ordersService.cancelOrder(currentUser._id, id);
     }
+    confirmReceived(currentUser, id) {
+        return this.ordersService.confirmReceivedByCustomer(currentUser, id);
+    }
+    confirmPayment(currentUser, id) {
+        return this.ordersService.confirmPayment(currentUser, id);
+    }
     updateOrderStatus(currentUser, id, updateOrderStatusDto) {
         return this.ordersService.updateOrderStatus(currentUser, id, updateOrderStatusDto);
     }
@@ -144,6 +150,25 @@ __decorate([
     __metadata("design:paramtypes", [Object, String]),
     __metadata("design:returntype", void 0)
 ], OrdersController.prototype, "cancelOrder", null);
+__decorate([
+    (0, common_1.Patch)(':id/confirm-received'),
+    (0, customize_1.ResponseMessage)('Customer confirm received'),
+    __param(0, (0, customize_1.User)()),
+    __param(1, (0, common_1.Param)('id')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String]),
+    __metadata("design:returntype", void 0)
+], OrdersController.prototype, "confirmReceived", null);
+__decorate([
+    (0, common_1.Patch)(':id/payment/confirm'),
+    (0, customize_1.RequirePermissions)('manage_orders'),
+    (0, customize_1.ResponseMessage)('Admin confirm payment'),
+    __param(0, (0, customize_1.User)()),
+    __param(1, (0, common_1.Param)('id')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String]),
+    __metadata("design:returntype", void 0)
+], OrdersController.prototype, "confirmPayment", null);
 __decorate([
     (0, common_1.Patch)(':id/status'),
     (0, customize_1.RequirePermissions)('manage_orders'),

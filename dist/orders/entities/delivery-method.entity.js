@@ -20,6 +20,7 @@ let DeliveryMethodEntity = class DeliveryMethodEntity {
     region;
     isActive;
     isDefault;
+    isPickup;
     createdAt;
     updatedAt;
 };
@@ -77,6 +78,16 @@ __decorate([
     }),
     __metadata("design:type", Boolean)
 ], DeliveryMethodEntity.prototype, "isDefault", void 0);
+__decorate([
+    (0, typeorm_1.Column)({
+        name: 'is_pickup',
+        type: 'tinyint',
+        width: 1,
+        default: () => '0',
+        comment: 'Nhận tại cửa hàng — bỏ qua bước SHIPPING',
+    }),
+    __metadata("design:type", Boolean)
+], DeliveryMethodEntity.prototype, "isPickup", void 0);
 __decorate([
     (0, typeorm_1.CreateDateColumn)({ name: 'created_at', type: 'datetime' }),
     __metadata("design:type", Date)

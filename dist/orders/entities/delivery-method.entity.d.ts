@@ -7,6 +7,7 @@ export declare class DeliveryMethodEntity {
     region: string | null;
     isActive: boolean;
     isDefault: boolean;
+    isPickup: boolean;
     createdAt: Date;
     updatedAt: Date;
 }

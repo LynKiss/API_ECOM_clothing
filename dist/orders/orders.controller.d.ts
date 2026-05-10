@@ -194,7 +194,7 @@ export declare class OrdersController {
         orderId: string;
         mode: import("./entities/order-tracking.entity").OrderTrackingMode;
         gpsSignalFresh: boolean;
-        activeSource: "none" | "manual" | "gps";
+        activeSource: "manual" | "gps" | "none";
         activeLocation: {
             latitude: number;
             longitude: number;
@@ -228,6 +228,84 @@ export declare class OrdersController {
         updatedAt: Date;
     }>;
     cancelOrder(currentUser: IUser, id: string): Promise<{
+        id: string;
+        status: import("./entities/order.entity").OrderStatus;
+        paymentMethod: import("./entities/order.entity").PaymentMethod;
+        paymentStatus: import("./entities/order.entity").PaymentStatus;
+        shippingAddressId: string | null;
+        deliveryId: string | null;
+        subtotalAmount: string;
+        discountAmount: string;
+        deliveryCost: string;
+        totalPayment: string;
+        totalQuantity: number;
+        note: string | null;
+        fullName: string;
+        phone: string;
+        address: string;
+        createdAt: Date;
+        updatedAt: Date;
+        items: {
+            id: string;
+            productId: string;
+            variantId: string | null;
+            sku: string | null;
+            colorName: string | null;
+            sizeName: string | null;
+            productName: string;
+            quantity: number;
+            unitPrice: string;
+            lineTotal: string;
+        }[];
+        history: {
+            id: string;
+            oldStatus: import("./entities/order.entity").OrderStatus | null;
+            newStatus: import("./entities/order.entity").OrderStatus;
+            changedBy: string | null;
+            note: string | null;
+            createdAt: Date;
+        }[];
+    }>;
+    confirmReceived(currentUser: IUser, id: string): Promise<{
+        id: string;
+        status: import("./entities/order.entity").OrderStatus;
+        paymentMethod: import("./entities/order.entity").PaymentMethod;
+        paymentStatus: import("./entities/order.entity").PaymentStatus;
+        shippingAddressId: string | null;
+        deliveryId: string | null;
+        subtotalAmount: string;
+        discountAmount: string;
+        deliveryCost: string;
+        totalPayment: string;
+        totalQuantity: number;
+        note: string | null;
+        fullName: string;
+        phone: string;
+        address: string;
+        createdAt: Date;
+        updatedAt: Date;
+        items: {
+            id: string;
+            productId: string;
+            variantId: string | null;
+            sku: string | null;
+            colorName: string | null;
+            sizeName: string | null;
+            productName: string;
+            quantity: number;
+            unitPrice: string;
+            lineTotal: string;
+        }[];
+        history: {
+            id: string;
+            oldStatus: import("./entities/order.entity").OrderStatus | null;
+            newStatus: import("./entities/order.entity").OrderStatus;
+            changedBy: string | null;
+            note: string | null;
+            createdAt: Date;
+        }[];
+    }>;
+    confirmPayment(currentUser: IUser, id: string): Promise<{
         id: string;
         status: import("./entities/order.entity").OrderStatus;
         paymentMethod: import("./entities/order.entity").PaymentMethod;
@@ -348,7 +426,7 @@ export declare class OrdersController {
         orderId: string;
         mode: import("./entities/order-tracking.entity").OrderTrackingMode;
         gpsSignalFresh: boolean;
-        activeSource: "none" | "manual" | "gps";
+        activeSource: "manual" | "gps" | "none";
         activeLocation: {
             latitude: number;
             longitude: number;
@@ -385,7 +463,7 @@ export declare class OrdersController {
         orderId: string;
         mode: import("./entities/order-tracking.entity").OrderTrackingMode;
         gpsSignalFresh: boolean;
-        activeSource: "none" | "manual" | "gps";
+        activeSource: "manual" | "gps" | "none";
         activeLocation: {
             latitude: number;
             longitude: number;
@@ -422,7 +500,7 @@ export declare class OrdersController {
         orderId: string;
         mode: import("./entities/order-tracking.entity").OrderTrackingMode;
         gpsSignalFresh: boolean;
-        activeSource: "none" | "manual" | "gps";
+        activeSource: "manual" | "gps" | "none";
         activeLocation: {
             latitude: number;
             longitude: number;
