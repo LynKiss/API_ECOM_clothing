@@ -305,7 +305,45 @@ export declare class OrdersController {
             createdAt: Date;
         }[];
     }>;
-    partialDeliver(currentUser: IUser, id: string, dto: PartialDeliverDto): Promise<import("./entities/order.entity").OrderEntity>;
+    partialDeliver(currentUser: IUser, id: string, dto: PartialDeliverDto): Promise<{
+        id: string;
+        status: import("./entities/order.entity").OrderStatus;
+        paymentMethod: import("./entities/order.entity").PaymentMethod;
+        paymentStatus: import("./entities/order.entity").PaymentStatus;
+        shippingAddressId: string | null;
+        deliveryId: string | null;
+        subtotalAmount: string;
+        discountAmount: string;
+        deliveryCost: string;
+        totalPayment: string;
+        totalQuantity: number;
+        note: string | null;
+        fullName: string;
+        phone: string;
+        address: string;
+        createdAt: Date;
+        updatedAt: Date;
+        items: {
+            id: string;
+            productId: string;
+            variantId: string | null;
+            sku: string | null;
+            colorName: string | null;
+            sizeName: string | null;
+            productName: string;
+            quantity: number;
+            unitPrice: string;
+            lineTotal: string;
+        }[];
+        history: {
+            id: string;
+            oldStatus: import("./entities/order.entity").OrderStatus | null;
+            newStatus: import("./entities/order.entity").OrderStatus;
+            changedBy: string | null;
+            note: string | null;
+            createdAt: Date;
+        }[];
+    }>;
     updateOrderTrackingMode(currentUser: IUser, id: string, updateOrderTrackingModeDto: UpdateOrderTrackingModeDto): Promise<{
         orderId: string;
         mode: import("./entities/order-tracking.entity").OrderTrackingMode;

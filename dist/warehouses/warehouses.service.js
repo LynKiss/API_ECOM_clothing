@@ -34,6 +34,29 @@ function genCode(prefix) {
     const rand = Math.floor(Math.random() * 9000 + 1000);
     return `${prefix}-${ymd}-${rand}`;
 }
+function toPositiveInt(value, field) {
+    const n = Number(value);
+    if (!Number.isInteger(n) || n <= 0) {
+        throw new common_1.BadRequestException(`${field} phai la so nguyen duong`);
+    }
+    return n;
+}
+function toNonNegativeInt(value, field) {
+    const n = Number(value);
+    if (!Number.isInteger(n) || n < 0) {
+        throw new common_1.BadRequestException(`${field} phai la so nguyen khong am`);
+    }
+    return n;
+}
+function parseOptionalDate(value, field) {
+    if (!value)
+        return null;
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+        throw new common_1.BadRequestException(`${field} khong hop le`);
+    }
+    return date;
+}
 let WarehousesService = class WarehousesService {
     whRepo;
     wsRepo;
@@ -67,13 +90,16 @@ let WarehousesService = class WarehousesService {
         return wh;
     }
     async create(dto, performer) {
+        const name = dto.name?.trim();
+        if (!name)
+            throw new common_1.BadRequestException('Ten kho la bat buoc');
         const wh = this.whRepo.create({
             warehouseId: (0, uuid_1.v4)(),
-            name: dto.name,
-            code: dto.code ?? null,
-            address: dto.address ?? null,
-            managerName: dto.managerName ?? null,
-            phone: dto.phone ?? null,
+            name,
+            code: dto.code?.trim() || null,
+            address: dto.address?.trim() || null,
+            managerName: dto.managerName?.trim() || null,
+            phone: dto.phone?.trim() || null,
             isActive: true,
             isDefault: false,
         });
@@ -91,7 +117,22 @@ let WarehousesService = class WarehousesService {
     async update(id, dto, performer) {
         const wh = await this.findOne(id);
         const before = { name: wh.name, code: wh.code, isActive: wh.isActive };
-        Object.assign(wh, dto);
+        if (dto.name !== undefined) {
+            const name = dto.name?.trim();
+            if (!name)
+                throw new common_1.BadRequestException('Ten kho la bat buoc');
+            wh.name = name;
+        }
+        if (dto.code !== undefined)
+            wh.code = dto.code?.trim() || null;
+        if (dto.address !== undefined)
+            wh.address = dto.address?.trim() || null;
+        if (dto.managerName !== undefined)
+            wh.managerName = dto.managerName?.trim() || null;
+        if (dto.phone !== undefined)
+            wh.phone = dto.phone?.trim() || null;
+        if (dto.isActive !== undefined)
+            wh.isActive = Boolean(dto.isActive);
         const saved = await this.whRepo.save(wh);
         void this.auditLogs.log({
             entityType: 'WAREHOUSE',
@@ -105,11 +146,26 @@ let WarehousesService = class WarehousesService {
         return saved;
     }
     async setDefault(id) {
-        await this.whRepo.update({}, { isDefault: false });
-        await this.whRepo.update({ warehouseId: id }, { isDefault: true });
+        await this.dataSource.transaction(async (em) => {
+            const warehouse = await em.findOne(warehouse_entity_1.WarehouseEntity, {
+                where: { warehouseId: id },
+                lock: { mode: 'pessimistic_write' },
+            });
+            if (!warehouse)
+                throw new common_1.NotFoundException('KhÃ´ng tÃ¬m tháº¥y kho hÃ ng');
+            await em
+                .createQueryBuilder()
+                .update(warehouse_entity_1.WarehouseEntity)
+                .set({ isDefault: false })
+                .where('is_default = :isDefault', { isDefault: true })
+                .execute();
+            warehouse.isDefault = true;
+            await em.save(warehouse_entity_1.WarehouseEntity, warehouse);
+        });
         return this.findOne(id);
     }
     async getStock(warehouseId) {
+        await this.findOne(warehouseId);
         return this.wsRepo
             .createQueryBuilder('ws')
             .where('ws.warehouseId = :warehouseId', { warehouseId })
@@ -132,8 +188,38 @@ let WarehousesService = class WarehousesService {
         return t;
     }
     async createTransfer(dto, userId) {
+        if (!dto.fromWarehouseId || !dto.toWarehouseId) {
+            throw new common_1.BadRequestException('Phai chon kho nguon va kho dich');
+        }
         if (dto.fromWarehouseId === dto.toWarehouseId) {
             throw new common_1.BadRequestException('Kho nguồn và kho đích không được giống nhau');
+        }
+        if (!Array.isArray(dto.items) || dto.items.length === 0) {
+            throw new common_1.BadRequestException('Phieu chuyen kho phai co it nhat mot dong hang');
+        }
+        const fromWarehouse = await this.whRepo.findOne({ where: { warehouseId: dto.fromWarehouseId } });
+        const toWarehouse = await this.whRepo.findOne({ where: { warehouseId: dto.toWarehouseId } });
+        if (!fromWarehouse?.isActive)
+            throw new common_1.BadRequestException('Kho nguon khong kha dung');
+        if (!toWarehouse?.isActive)
+            throw new common_1.BadRequestException('Kho dich khong kha dung');
+        const seenProducts = new Set();
+        const lines = [];
+        for (const item of dto.items) {
+            if (!item.productId)
+                throw new common_1.BadRequestException('Dong hang thieu san pham');
+            if (seenProducts.has(item.productId)) {
+                throw new common_1.BadRequestException('Khong duoc lap san pham trong cung mot phieu chuyen');
+            }
+            seenProducts.add(item.productId);
+            const product = await this.productRepo.findOne({ where: { productId: item.productId } });
+            if (!product)
+                throw new common_1.BadRequestException(`San pham ${item.productId} khong ton tai`);
+            lines.push({
+                productId: item.productId,
+                qtyRequested: toPositiveInt(item.qtyRequested, 'qtyRequested'),
+                notes: item.notes?.trim() || null,
+            });
         }
         const transfer = this.transferRepo.create({
             transferId: (0, uuid_1.v4)(),
@@ -141,16 +227,16 @@ let WarehousesService = class WarehousesService {
             fromWarehouseId: dto.fromWarehouseId,
             toWarehouseId: dto.toWarehouseId,
             status: stock_transfer_entity_1.StockTransferStatus.DRAFT,
-            transferDate: dto.transferDate ? new Date(dto.transferDate) : null,
-            notes: dto.notes ?? null,
+            transferDate: parseOptionalDate(dto.transferDate, 'transferDate'),
+            notes: dto.notes?.trim() || null,
             createdBy: userId ?? null,
         });
-        transfer.items = dto.items.map((i) => this.transferItemRepo.create({
+        transfer.items = lines.map((i) => this.transferItemRepo.create({
             transferId: transfer.transferId,
             productId: i.productId,
             qtyRequested: i.qtyRequested,
             qtyReceived: 0,
-            notes: i.notes ?? null,
+            notes: i.notes,
         }));
         return this.transferRepo.save(transfer);
     }
@@ -160,9 +246,20 @@ let WarehousesService = class WarehousesService {
             throw new common_1.BadRequestException('Phiếu chuyển kho đã được xử lý');
         }
         await this.dataSource.transaction(async (em) => {
-            for (const item of t.items) {
+            const lockedTransfer = await em.findOne(stock_transfer_entity_1.StockTransferEntity, {
+                where: { transferId: id },
+                relations: ['items'],
+                lock: { mode: 'pessimistic_write' },
+            });
+            if (!lockedTransfer)
+                throw new common_1.NotFoundException('Khong tim thay phieu chuyen kho');
+            if (lockedTransfer.status !== stock_transfer_entity_1.StockTransferStatus.DRAFT) {
+                throw new common_1.BadRequestException('Phieu chuyen kho da duoc xu ly');
+            }
+            for (const item of lockedTransfer.items) {
                 const fromStock = await em.findOne(warehouse_stock_entity_1.WarehouseStockEntity, {
-                    where: { warehouseId: t.fromWarehouseId, productId: item.productId },
+                    where: { warehouseId: lockedTransfer.fromWarehouseId, productId: item.productId },
+                    lock: { mode: 'pessimistic_write' },
                 });
                 if (!fromStock || fromStock.quantity < item.qtyRequested) {
                     throw new common_1.BadRequestException(`Kho nguồn không đủ hàng cho sản phẩm ${item.productId}`);
@@ -175,12 +272,12 @@ let WarehousesService = class WarehousesService {
                     transactionType: inventory_transaction_entity_1.InventoryTransactionType.EXPORT,
                     quantityChange: -item.qtyRequested,
                     referenceType: 'TR',
-                    referenceId: t.transferId,
+                    referenceId: lockedTransfer.transferId,
                     note: `Xuất kho chuyển theo phiếu ${t.transferCode}`,
-                    relatedOrderId: t.transferId,
+                    relatedOrderId: null,
                 }));
             }
-            await em.update(stock_transfer_entity_1.StockTransferEntity, { transferId: id }, { status: stock_transfer_entity_1.StockTransferStatus.SHIPPING });
+            await em.update(stock_transfer_entity_1.StockTransferEntity, { transferId: id }, { status: stock_transfer_entity_1.StockTransferStatus.SHIPPED });
         });
         void this.auditLogs.log({
             entityType: 'STOCK_TRANSFER',
@@ -188,19 +285,56 @@ let WarehousesService = class WarehousesService {
             action: 'SHIP',
             changedBy: performer?.username,
             ipAddress: performer?.ip,
-            afterData: { transferCode: t.transferCode, status: 'SHIPPING' },
+            afterData: { transferCode: t.transferCode, status: 'SHIPPED' },
         });
         return this.findOneTransfer(id);
     }
     async receiveTransfer(id, receivedItems, userId, performer) {
+        if (!Array.isArray(receivedItems) || receivedItems.length === 0) {
+            throw new common_1.BadRequestException('Danh sach hang nhan khong duoc rong');
+        }
         const t = await this.findOneTransfer(id);
-        if (t.status !== stock_transfer_entity_1.StockTransferStatus.SHIPPING) {
+        if (t.status !== stock_transfer_entity_1.StockTransferStatus.SHIPPED) {
             throw new common_1.BadRequestException('Phiếu chưa ở trạng thái đang vận chuyển');
         }
         await this.dataSource.transaction(async (em) => {
+            const lockedTransfer = await em.findOne(stock_transfer_entity_1.StockTransferEntity, {
+                where: { transferId: id },
+                relations: ['items'],
+                lock: { mode: 'pessimistic_write' },
+            });
+            if (!lockedTransfer)
+                throw new common_1.NotFoundException('Khong tim thay phieu chuyen kho');
+            if (lockedTransfer.status !== stock_transfer_entity_1.StockTransferStatus.SHIPPED) {
+                throw new common_1.BadRequestException('Phieu chua o trang thai da xuat kho');
+            }
+            Object.assign(t, lockedTransfer);
+            t.items = lockedTransfer.items;
+            const transferItems = new Map(t.items.map((item) => [item.productId, item]));
+            const seenReceived = new Set();
             for (const recv of receivedItems) {
+                const item = transferItems.get(recv.productId);
+                if (!item)
+                    throw new common_1.BadRequestException(`San pham ${recv.productId} khong thuoc phieu chuyen`);
+                if (seenReceived.has(recv.productId)) {
+                    throw new common_1.BadRequestException('Khong duoc lap san pham khi nhan hang');
+                }
+                seenReceived.add(recv.productId);
+                const qtyReceived = toNonNegativeInt(recv.qtyReceived, 'qtyReceived');
+                if (qtyReceived > item.qtyRequested) {
+                    throw new common_1.BadRequestException(`So luong nhan cua ${recv.productId} vuot so luong yeu cau`);
+                }
+            }
+            for (const item of t.items) {
+                if (!seenReceived.has(item.productId)) {
+                    throw new common_1.BadRequestException(`Thieu so luong nhan cho san pham ${item.productId}`);
+                }
+            }
+            for (const recv of receivedItems) {
+                const qtyReceived = toNonNegativeInt(recv.qtyReceived, 'qtyReceived');
                 let toStock = await em.findOne(warehouse_stock_entity_1.WarehouseStockEntity, {
                     where: { warehouseId: t.toWarehouseId, productId: recv.productId },
+                    lock: { mode: 'pessimistic_write' },
                 });
                 if (!toStock) {
                     toStock = em.create(warehouse_stock_entity_1.WarehouseStockEntity, {
@@ -209,23 +343,23 @@ let WarehousesService = class WarehousesService {
                         quantity: 0,
                     });
                 }
-                toStock.quantity += recv.qtyReceived;
+                toStock.quantity += qtyReceived;
                 await em.save(warehouse_stock_entity_1.WarehouseStockEntity, toStock);
                 await em
                     .createQueryBuilder()
                     .update(stock_transfer_item_entity_1.StockTransferItemEntity)
-                    .set({ qtyReceived: recv.qtyReceived })
+                    .set({ qtyReceived })
                     .where('transfer_id = :tid AND product_id = :pid', { tid: id, pid: recv.productId })
                     .execute();
                 await em.save(inventory_transaction_entity_1.InventoryTransactionEntity, em.create(inventory_transaction_entity_1.InventoryTransactionEntity, {
                     productId: recv.productId,
                     performedBy: userId ?? null,
                     transactionType: inventory_transaction_entity_1.InventoryTransactionType.IMPORT,
-                    quantityChange: recv.qtyReceived,
+                    quantityChange: qtyReceived,
                     referenceType: 'TR',
                     referenceId: t.transferId,
                     note: `Nhập kho nhận từ phiếu chuyển ${t.transferCode}`,
-                    relatedOrderId: t.transferId,
+                    relatedOrderId: null,
                 }));
             }
             await em.update(stock_transfer_entity_1.StockTransferEntity, { transferId: id }, {
@@ -258,23 +392,60 @@ let WarehousesService = class WarehousesService {
         return a;
     }
     async createAdjustment(dto, userId) {
+        if (!Object.values(stock_adjustment_entity_1.AdjustmentReason).includes(dto.reason)) {
+            throw new common_1.BadRequestException('Ly do dieu chinh khong hop le');
+        }
+        if (!Array.isArray(dto.items) || dto.items.length === 0) {
+            throw new common_1.BadRequestException('Phieu dieu chinh phai co it nhat mot dong hang');
+        }
+        const warehouseId = dto.warehouseId?.trim() || null;
+        if (warehouseId) {
+            const warehouse = await this.whRepo.findOne({ where: { warehouseId } });
+            if (!warehouse?.isActive)
+                throw new common_1.BadRequestException('Kho dieu chinh khong kha dung');
+        }
+        const seenProducts = new Set();
+        const lines = [];
+        for (const item of dto.items) {
+            if (!item.productId)
+                throw new common_1.BadRequestException('Dong hang thieu san pham');
+            if (seenProducts.has(item.productId)) {
+                throw new common_1.BadRequestException('Khong duoc lap san pham trong cung mot phieu dieu chinh');
+            }
+            seenProducts.add(item.productId);
+            const product = await this.productRepo.findOne({ where: { productId: item.productId } });
+            if (!product)
+                throw new common_1.BadRequestException(`San pham ${item.productId} khong ton tai`);
+            const stock = warehouseId
+                ? await this.wsRepo.findOne({ where: { warehouseId, productId: item.productId } })
+                : null;
+            const qtyBefore = warehouseId ? stock?.quantity ?? 0 : product.quantityAvailable;
+            const qtyAfter = toNonNegativeInt(item.qtyAfter, 'qtyAfter');
+            lines.push({
+                productId: item.productId,
+                qtyBefore,
+                qtyAfter,
+                qtyDiff: qtyAfter - qtyBefore,
+                notes: item.notes?.trim() || null,
+            });
+        }
         const adj = this.adjRepo.create({
             adjustmentId: (0, uuid_1.v4)(),
             adjustmentCode: genCode('ADJ'),
-            warehouseId: dto.warehouseId ?? null,
+            warehouseId,
             reason: dto.reason,
             status: stock_adjustment_entity_1.AdjustmentStatus.DRAFT,
-            adjustmentDate: dto.adjustmentDate ? new Date(dto.adjustmentDate) : null,
-            notes: dto.notes ?? null,
+            adjustmentDate: parseOptionalDate(dto.adjustmentDate, 'adjustmentDate'),
+            notes: dto.notes?.trim() || null,
             createdBy: userId ?? null,
         });
-        adj.items = dto.items.map((i) => this.adjItemRepo.create({
+        adj.items = lines.map((i) => this.adjItemRepo.create({
             adjustmentId: adj.adjustmentId,
             productId: i.productId,
             qtyBefore: i.qtyBefore,
             qtyAfter: i.qtyAfter,
-            qtyDiff: i.qtyAfter - i.qtyBefore,
-            notes: i.notes ?? null,
+            qtyDiff: i.qtyDiff,
+            notes: i.notes,
         }));
         return this.adjRepo.save(adj);
     }
@@ -288,6 +459,7 @@ let WarehousesService = class WarehousesService {
                 (await em.findOne(warehouse_entity_1.WarehouseEntity, { where: { isDefault: true } }))
                     ?.warehouseId ??
                 null;
+            const adjustsSpecificWarehouse = Boolean(adj.warehouseId);
             for (const item of adj.items) {
                 const product = await em.findOne(product_entity_1.ProductEntity, {
                     where: { productId: item.productId },
@@ -295,38 +467,59 @@ let WarehousesService = class WarehousesService {
                 });
                 if (!product)
                     continue;
-                const qtyBefore = product.quantityAvailable;
-                product.quantityAvailable = item.qtyAfter;
+                let stockBefore = product.quantityAvailable;
+                let qtyDiff = item.qtyAfter - stockBefore;
+                let stock = null;
+                if (adjustsSpecificWarehouse && warehouseId) {
+                    stock = await em.findOne(warehouse_stock_entity_1.WarehouseStockEntity, {
+                        where: { warehouseId, productId: item.productId },
+                        lock: { mode: 'pessimistic_write' },
+                    });
+                    stockBefore = stock?.quantity ?? 0;
+                    qtyDiff = item.qtyAfter - stockBefore;
+                }
+                const productQtyBefore = product.quantityAvailable;
+                const productQtyAfter = adjustsSpecificWarehouse ? product.quantityAvailable + qtyDiff : item.qtyAfter;
+                if (productQtyAfter < 0) {
+                    throw new common_1.BadRequestException(`Ton kho tong cua san pham ${item.productId} bi am`);
+                }
+                product.quantityAvailable = productQtyAfter;
                 await em.save(product_entity_1.ProductEntity, product);
-                if (item.qtyDiff !== 0) {
-                    const txType = item.qtyDiff > 0
+                item.qtyBefore = stockBefore;
+                item.qtyDiff = qtyDiff;
+                await em.save(stock_adjustment_item_entity_1.StockAdjustmentItemEntity, item);
+                if (!adjustsSpecificWarehouse && warehouseId) {
+                    stock = await em.findOne(warehouse_stock_entity_1.WarehouseStockEntity, {
+                        where: { warehouseId, productId: item.productId },
+                        lock: { mode: 'pessimistic_write' },
+                    });
+                }
+                if (qtyDiff !== 0) {
+                    const txType = qtyDiff > 0
                         ? inventory_transaction_entity_1.InventoryTransactionType.ADJUSTMENT
                         : inventory_transaction_entity_1.InventoryTransactionType.DAMAGE;
                     await em.save(inventory_transaction_entity_1.InventoryTransactionEntity, em.create(inventory_transaction_entity_1.InventoryTransactionEntity, {
                         productId: item.productId,
                         performedBy: userId ?? null,
                         transactionType: txType,
-                        quantityChange: item.qtyDiff,
-                        quantityBefore: qtyBefore,
-                        quantityAfter: item.qtyAfter,
+                        quantityChange: qtyDiff,
+                        quantityBefore: productQtyBefore,
+                        quantityAfter: product.quantityAvailable,
                         referenceType: 'ADJ',
                         referenceId: adj.adjustmentId,
                         note: `Điều chỉnh kho theo phiếu ${adj.adjustmentCode} — lý do: ${adj.reason}`,
-                        relatedOrderId: adj.adjustmentId,
+                        relatedOrderId: null,
                     }));
                     if (warehouseId) {
-                        const stock = await em.findOne(warehouse_stock_entity_1.WarehouseStockEntity, {
-                            where: { warehouseId, productId: item.productId },
-                        });
                         if (stock) {
-                            stock.quantity = Math.max(0, stock.quantity + item.qtyDiff);
+                            stock.quantity = adjustsSpecificWarehouse ? item.qtyAfter : Math.max(0, stock.quantity + qtyDiff);
                             await em.save(warehouse_stock_entity_1.WarehouseStockEntity, stock);
                         }
-                        else if (item.qtyDiff > 0) {
+                        else if (adjustsSpecificWarehouse || qtyDiff > 0) {
                             await em.save(warehouse_stock_entity_1.WarehouseStockEntity, em.create(warehouse_stock_entity_1.WarehouseStockEntity, {
                                 warehouseId,
                                 productId: item.productId,
-                                quantity: item.qtyDiff,
+                                quantity: adjustsSpecificWarehouse ? item.qtyAfter : qtyDiff,
                             }));
                         }
                     }

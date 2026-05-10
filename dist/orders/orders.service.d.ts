@@ -33,6 +33,7 @@ import { OrderStatusHistoryEntity } from './entities/order-status-history.entity
 import { PaymentTransactionEntity, PaymentTransactionStatus } from './entities/payment-transaction.entity';
 import { ReturnEntity, ReturnInspectionStatus, ReturnStatus } from './entities/return.entity';
 import { ShippingAddressEntity } from './entities/shipping-address.entity';
+import { MembershipService } from '../membership/membership.service';
 export declare class OrdersService {
     private readonly deliveryMethodsRepository;
     private readonly shippingAddressesRepository;
@@ -57,10 +58,11 @@ export declare class OrdersService {
     private readonly notificationsService;
     private readonly ordersAdminPublisher;
     private readonly settingsService;
+    private readonly membershipService;
     private readonly logger;
     private readonly liveTrackingFreshnessMs;
     private readonly stalePaymentTtlMs;
-    constructor(deliveryMethodsRepository: Repository<DeliveryMethodEntity>, shippingAddressesRepository: Repository<ShippingAddressEntity>, ordersRepository: Repository<OrderEntity>, orderTrackingRepository: Repository<OrderTrackingEntity>, orderItemsRepository: Repository<OrderItemEntity>, orderStatusHistoryRepository: Repository<OrderStatusHistoryEntity>, cartsRepository: Repository<ShoppingCartEntity>, cartItemsRepository: Repository<CartItemEntity>, productsRepository: Repository<ProductEntity>, productVariantsRepository: Repository<ProductVariantEntity>, colorsRepository: Repository<ColorEntity>, sizesRepository: Repository<SizeEntity>, inventoryTransactionsRepository: Repository<InventoryTransactionEntity>, usersRepository: Repository<UserEntity>, discountsRepository: Repository<DiscountEntity>, discountCategoriesRepository: Repository<DiscountCategoryEntity>, discountProductsRepository: Repository<DiscountProductEntity>, couponUsageRepository: Repository<CouponUsageEntity>, returnsRepository: Repository<ReturnEntity>, paymentTransactionsRepository: Repository<PaymentTransactionEntity>, notificationsService: NotificationsService, ordersAdminPublisher: OrdersAdminPublisher, settingsService: SettingsService);
+    constructor(deliveryMethodsRepository: Repository<DeliveryMethodEntity>, shippingAddressesRepository: Repository<ShippingAddressEntity>, ordersRepository: Repository<OrderEntity>, orderTrackingRepository: Repository<OrderTrackingEntity>, orderItemsRepository: Repository<OrderItemEntity>, orderStatusHistoryRepository: Repository<OrderStatusHistoryEntity>, cartsRepository: Repository<ShoppingCartEntity>, cartItemsRepository: Repository<CartItemEntity>, productsRepository: Repository<ProductEntity>, productVariantsRepository: Repository<ProductVariantEntity>, colorsRepository: Repository<ColorEntity>, sizesRepository: Repository<SizeEntity>, inventoryTransactionsRepository: Repository<InventoryTransactionEntity>, usersRepository: Repository<UserEntity>, discountsRepository: Repository<DiscountEntity>, discountCategoriesRepository: Repository<DiscountCategoryEntity>, discountProductsRepository: Repository<DiscountProductEntity>, couponUsageRepository: Repository<CouponUsageEntity>, returnsRepository: Repository<ReturnEntity>, paymentTransactionsRepository: Repository<PaymentTransactionEntity>, notificationsService: NotificationsService, ordersAdminPublisher: OrdersAdminPublisher, settingsService: SettingsService, membershipService: MembershipService);
     private syncDefaultWarehouseStock;
     private ensureUserExists;
     private findOwnedOrder;
@@ -591,6 +593,44 @@ export declare class OrdersService {
     partialDeliverOrder(currentUser: IUser, orderId: string, items: {
         orderItemId: string;
         deliveredQty: number;
-    }[], note?: string): Promise<OrderEntity>;
+    }[], note?: string): Promise<{
+        id: string;
+        status: OrderStatus;
+        paymentMethod: PaymentMethod;
+        paymentStatus: PaymentStatus;
+        shippingAddressId: string | null;
+        deliveryId: string | null;
+        subtotalAmount: string;
+        discountAmount: string;
+        deliveryCost: string;
+        totalPayment: string;
+        totalQuantity: number;
+        note: string | null;
+        fullName: string;
+        phone: string;
+        address: string;
+        createdAt: Date;
+        updatedAt: Date;
+        items: {
+            id: string;
+            productId: string;
+            variantId: string | null;
+            sku: string | null;
+            colorName: string | null;
+            sizeName: string | null;
+            productName: string;
+            quantity: number;
+            unitPrice: string;
+            lineTotal: string;
+        }[];
+        history: {
+            id: string;
+            oldStatus: OrderStatus | null;
+            newStatus: OrderStatus;
+            changedBy: string | null;
+            note: string | null;
+            createdAt: Date;
+        }[];
+    }>;
     inspectReturn(currentUser: IUser, returnId: string, decision: ReturnInspectionStatus, note?: string): Promise<ReturnEntity | null>;
 }

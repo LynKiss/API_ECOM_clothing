@@ -15,7 +15,7 @@ const stock_transfer_item_entity_1 = require("./stock-transfer-item.entity");
 var StockTransferStatus;
 (function (StockTransferStatus) {
     StockTransferStatus["DRAFT"] = "draft";
-    StockTransferStatus["SHIPPING"] = "shipping";
+    StockTransferStatus["SHIPPED"] = "shipped";
     StockTransferStatus["RECEIVED"] = "received";
     StockTransferStatus["CANCELLED"] = "cancelled";
 })(StockTransferStatus || (exports.StockTransferStatus = StockTransferStatus = {}));

@@ -1,7 +1,7 @@
 import { GoodsReceiptItemEntity } from './goods-receipt-item.entity';
 export declare enum GoodsReceiptStatus {
     DRAFT = "draft",
-    CONFIRMED = "confirmed",
+    POSTED = "posted",
     CANCELLED = "cancelled"
 }
 export declare class GoodsReceiptEntity {

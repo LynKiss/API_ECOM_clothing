@@ -10,7 +10,7 @@ import { SupplierReturnItemEntity } from './supplier-return-item.entity';
 
 export enum SupplierReturnStatus {
   DRAFT = 'draft',
-  CONFIRMED = 'confirmed',
+  POSTED = 'posted',
   CANCELLED = 'cancelled',
 }
 
@@ -33,9 +33,6 @@ export class SupplierReturnEntity {
 
   @Column({ name: 'status', type: 'enum', enum: SupplierReturnStatus, default: SupplierReturnStatus.DRAFT })
   status!: SupplierReturnStatus;
-
-  @Column({ name: 'total_refund', type: 'decimal', precision: 15, scale: 2, default: 0 })
-  totalRefund!: string;
 
   @Column({ name: 'notes', type: 'text', nullable: true })
   notes!: string | null;

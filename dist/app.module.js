@@ -49,6 +49,7 @@ const banners_module_1 = require("./banners/banners.module");
 const virtual_try_on_module_1 = require("./virtual-try-on/virtual-try-on.module");
 const super_admin_module_1 = require("./super-admin/super-admin.module");
 const super_admin_sync_module_1 = require("./super-admin-sync/super-admin-sync.module");
+const membership_module_1 = require("./membership/membership.module");
 let AppModule = class AppModule {
 };
 exports.AppModule = AppModule;
@@ -99,6 +100,7 @@ exports.AppModule = AppModule = __decorate([
             virtual_try_on_module_1.VirtualTryOnModule,
             intelligence_module_1.IntelligenceModule,
             health_module_1.HealthModule,
+            membership_module_1.MembershipModule,
         ],
         controllers: [app_controller_1.AppController],
         providers: [

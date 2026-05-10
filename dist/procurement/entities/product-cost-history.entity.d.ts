@@ -6,5 +6,4 @@ export declare class ProductCostHistoryEntity {
     qtyAtReceipt: number;
     effectiveDate: Date;
     notes: string | null;
-    createdAt: Date;
 }

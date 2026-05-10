@@ -70,6 +70,7 @@ import {
   ReturnStatus,
 } from './entities/return.entity';
 import { ShippingAddressEntity } from './entities/shipping-address.entity';
+import { MembershipService } from '../membership/membership.service';
 
 @Injectable()
 export class OrdersService {
@@ -121,6 +122,7 @@ export class OrdersService {
     private readonly notificationsService: NotificationsService,
     private readonly ordersAdminPublisher: OrdersAdminPublisher,
     private readonly settingsService: SettingsService,
+    private readonly membershipService: MembershipService,
   ) {}
 
   private async syncDefaultWarehouseStock(
@@ -629,7 +631,6 @@ export class OrdersService {
       [OrderStatus.PROCESSING]: [OrderStatus.SHIPPING, OrderStatus.CANCELLED],
       [OrderStatus.SHIPPING]: [
         OrderStatus.DELIVERED,
-        OrderStatus.PARTIAL_DELIVERED,
         OrderStatus.RETURNED,
       ],
       [OrderStatus.PARTIAL_DELIVERED]: [OrderStatus.RETURNED],
@@ -1725,6 +1726,11 @@ export class OrdersService {
       orderId,
       nextStatus,
     );
+
+    if (nextStatus === OrderStatus.DELIVERED && updatedOrder.userId) {
+      void this.membershipService.recalculateAndReward(updatedOrder.userId);
+    }
+
     return this.buildOrderDetail(updatedOrder);
   }
 
@@ -2559,7 +2565,7 @@ export class OrdersService {
       order.orderStatus,
     );
 
-    return this.findAnyOrder(order.orderId);
+    return this.buildOrderDetail(await this.findAnyOrder(order.orderId));
   }
 
   /**

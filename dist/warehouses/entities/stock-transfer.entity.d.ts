@@ -1,7 +1,7 @@
 import { StockTransferItemEntity } from './stock-transfer-item.entity';
 export declare enum StockTransferStatus {
     DRAFT = "draft",
-    SHIPPING = "shipping",
+    SHIPPED = "shipped",
     RECEIVED = "received",
     CANCELLED = "cancelled"
 }

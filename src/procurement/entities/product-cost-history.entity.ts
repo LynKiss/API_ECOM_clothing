@@ -1,4 +1,4 @@
-import { Column, CreateDateColumn, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
 
 @Entity({ name: 'product_cost_history' })
 export class ProductCostHistoryEntity {
@@ -22,7 +22,4 @@ export class ProductCostHistoryEntity {
 
   @Column({ name: 'notes', type: 'text', nullable: true })
   notes!: string | null;
-
-  @CreateDateColumn({ name: 'created_at', type: 'datetime' })
-  createdAt!: Date;
 }

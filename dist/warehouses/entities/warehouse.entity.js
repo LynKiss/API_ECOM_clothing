@@ -29,11 +29,11 @@ __decorate([
     __metadata("design:type", String)
 ], WarehouseEntity.prototype, "warehouseId", void 0);
 __decorate([
-    (0, typeorm_1.Column)({ name: 'name', type: 'varchar', length: 255 }),
+    (0, typeorm_1.Column)({ name: 'warehouse_name', type: 'varchar', length: 150 }),
     __metadata("design:type", String)
 ], WarehouseEntity.prototype, "name", void 0);
 __decorate([
-    (0, typeorm_1.Column)({ name: 'code', type: 'varchar', length: 50, unique: true, nullable: true }),
+    (0, typeorm_1.Column)({ name: 'warehouse_code', type: 'varchar', length: 50, unique: true, nullable: true }),
     __metadata("design:type", Object)
 ], WarehouseEntity.prototype, "code", void 0);
 __decorate([

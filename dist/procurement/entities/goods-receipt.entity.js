@@ -15,7 +15,7 @@ const goods_receipt_item_entity_1 = require("./goods-receipt-item.entity");
 var GoodsReceiptStatus;
 (function (GoodsReceiptStatus) {
     GoodsReceiptStatus["DRAFT"] = "draft";
-    GoodsReceiptStatus["CONFIRMED"] = "confirmed";
+    GoodsReceiptStatus["POSTED"] = "posted";
     GoodsReceiptStatus["CANCELLED"] = "cancelled";
 })(GoodsReceiptStatus || (exports.GoodsReceiptStatus = GoodsReceiptStatus = {}));
 let GoodsReceiptEntity = class GoodsReceiptEntity {

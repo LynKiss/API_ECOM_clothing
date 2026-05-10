@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, In, Repository } from 'typeorm';
 import { Logger } from '@nestjs/common';
 import { v4 as uuidv4 } from 'uuid';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
@@ -125,6 +125,32 @@ export class ProcurementService {
   ) {}
 
   private readonly procurementLogger = new Logger(ProcurementService.name);
+
+  private supplierReturnTotal(items: SupplierReturnItemEntity[] = []): string {
+    const total = items.reduce(
+      (sum, item) => sum + (item.hasRefund ? Number(item.refundAmount ?? 0) : 0),
+      0,
+    );
+    return total.toFixed(2);
+  }
+
+  private async attachSupplierReturnTotals<T extends SupplierReturnEntity>(
+    returns: T[],
+  ): Promise<Array<T & { totalRefund: string }>> {
+    const ids = returns.map((sr) => sr.srId);
+    if (ids.length === 0) return returns.map((sr) => Object.assign(sr, { totalRefund: '0.00' }));
+
+    const items = await this.srItemRepo.find({ where: { srId: In(ids) } });
+    const totals = new Map<string, number>();
+    for (const item of items) {
+      if (!item.hasRefund) continue;
+      totals.set(item.srId, (totals.get(item.srId) ?? 0) + Number(item.refundAmount ?? 0));
+    }
+
+    return returns.map((sr) =>
+      Object.assign(sr, { totalRefund: (totals.get(sr.srId) ?? 0).toFixed(2) }),
+    );
+  }
 
   private async ensureProductAndVariant(productId: string, variantId?: string | null) {
     const product = await this.productRepo.findOneBy({ productId });
@@ -498,6 +524,22 @@ export class ProcurementService {
       await this.ensureProductAndVariant(item.productId, item.variantId);
     }
 
+    if (dto.poId) {
+      const linkedPo = await this.poRepo.findOne({ where: { poId: dto.poId } });
+      if (!linkedPo) {
+        throw new BadRequestException(`Không tìm thấy PO ${dto.poId}`);
+      }
+      if (linkedPo.supplierId !== dto.supplierId) {
+        throw new BadRequestException('Nhà cung cấp phiếu nhận phải khớp với nhà cung cấp của PO liên kết');
+      }
+      if (linkedPo.status === PurchaseOrderStatus.CANCELLED) {
+        throw new BadRequestException('Không thể tạo phiếu nhận cho PO đã hủy');
+      }
+      if (linkedPo.status === PurchaseOrderStatus.RECEIVED) {
+        throw new BadRequestException('PO này đã nhận đủ hàng');
+      }
+    }
+
     const shippingCost = dto.shippingCost ?? 0;
     const otherCost = dto.otherCost ?? 0;
     const totalExtraCost = shippingCost + otherCost;
@@ -655,7 +697,7 @@ export class ProcurementService {
           referenceId: gr.grId,
           unitCostAtTime: item.landedCost,
           note: `Nhập kho từ phiếu ${gr.grCode}`,
-          relatedOrderId: gr.grId,
+          relatedOrderId: null,
         });
         await em.save(InventoryTransactionEntity, tx);
 
@@ -693,7 +735,7 @@ export class ProcurementService {
       }
 
       // 6. Cập nhật status GR
-      await em.update(GoodsReceiptEntity, { grId: id }, { status: GoodsReceiptStatus.CONFIRMED });
+      await em.update(GoodsReceiptEntity, { grId: id }, { status: GoodsReceiptStatus.POSTED });
 
       // 7. Cập nhật status PO nếu có
       if (gr.poId) {
@@ -723,14 +765,14 @@ export class ProcurementService {
       action: 'CONFIRM',
       changedBy: performer?.username,
       ipAddress: performer?.ip,
-      afterData: { grCode: gr.grCode, status: GoodsReceiptStatus.CONFIRMED },
+      afterData: { grCode: gr.grCode, status: GoodsReceiptStatus.POSTED },
     });
     return this.findOneGr(id);
   }
 
   async cancelGr(id: string, performer?: { userId: string; username: string; ip?: string }) {
     const gr = await this.findOneGr(id);
-    if (gr.status === GoodsReceiptStatus.CONFIRMED) {
+    if (gr.status === GoodsReceiptStatus.POSTED) {
       throw new BadRequestException('Không thể hủy phiếu đã xác nhận. Hãy tạo phiếu trả hàng.');
     }
     await this.grRepo.update({ grId: id }, { status: GoodsReceiptStatus.CANCELLED });
@@ -759,14 +801,16 @@ export class ProcurementService {
     if (supplierId) qb.andWhere('sr.supplierId = :supplierId', { supplierId });
 
     const total = await qb.getCount();
-    const items = await qb.skip((page - 1) * limit).take(limit).getMany();
+    const items = await this.attachSupplierReturnTotals(
+      await qb.skip((page - 1) * limit).take(limit).getMany(),
+    );
     return { items, meta: { page, limit, total, totalPages: Math.ceil(total / limit) } };
   }
 
   async findOneSr(id: string) {
     const sr = await this.srRepo.findOne({ where: { srId: id }, relations: ['items'] });
     if (!sr) throw new NotFoundException('Không tìm thấy phiếu trả hàng NCC');
-    return sr;
+    return Object.assign(sr, { totalRefund: this.supplierReturnTotal(sr.items) });
   }
 
   async createSr(dto: CreateSrDto, performer?: { userId: string; username: string; ip?: string }) {
@@ -786,7 +830,6 @@ export class ProcurementService {
       supplierId: dto.supplierId,
       returnDate: new Date(dto.returnDate),
       status: SupplierReturnStatus.DRAFT,
-      totalRefund: String(totalRefund),
       notes: dto.notes ?? null,
       createdBy: performer?.userId ?? null,
     });
@@ -815,9 +858,9 @@ export class ProcurementService {
       action: 'CREATE',
       changedBy: performer?.username,
       ipAddress: performer?.ip,
-      afterData: { srCode: saved.srCode, supplierId: saved.supplierId, totalRefund: saved.totalRefund },
+      afterData: { srCode: saved.srCode, supplierId: saved.supplierId, totalRefund },
     });
-    return saved;
+    return Object.assign(saved, { totalRefund: totalRefund.toFixed(2) });
   }
 
   async confirmSr(id: string, performer?: { userId: string; username: string; ip?: string }) {
@@ -867,7 +910,7 @@ export class ProcurementService {
           referenceType: 'SR',
           referenceId: sr.srId,
           note: `Trả hàng NCC từ phiếu ${sr.srCode} — ${item.reason ?? ''}`,
-          relatedOrderId: sr.srId,
+          relatedOrderId: null,
         });
         await em.save(InventoryTransactionEntity, tx);
 
@@ -883,7 +926,7 @@ export class ProcurementService {
         }
       }
 
-      await em.update(SupplierReturnEntity, { srId: id }, { status: SupplierReturnStatus.CONFIRMED });
+      await em.update(SupplierReturnEntity, { srId: id }, { status: SupplierReturnStatus.POSTED });
     });
 
     void this.auditLogs.log({
@@ -892,7 +935,7 @@ export class ProcurementService {
       action: 'CONFIRM',
       changedBy: performer?.username,
       ipAddress: performer?.ip,
-      afterData: { srCode: sr.srCode, status: SupplierReturnStatus.CONFIRMED },
+      afterData: { srCode: sr.srCode, status: SupplierReturnStatus.POSTED },
     });
     return this.findOneSr(id);
   }

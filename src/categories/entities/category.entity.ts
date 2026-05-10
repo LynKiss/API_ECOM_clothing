@@ -62,6 +62,14 @@ export class CategoryEntity {
   })
   sortOrder: number;
 
+  @Column({
+    name: 'image_url',
+    type: 'varchar',
+    length: 500,
+    nullable: true,
+  })
+  imageUrl: string | null;
+
   @CreateDateColumn({
     name: 'created_at',
     type: 'datetime',

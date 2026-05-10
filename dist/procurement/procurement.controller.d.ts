@@ -44,7 +44,9 @@ export declare class ProcurementController {
     confirmGr(id: string, req: any): Promise<import("./entities/goods-receipt.entity").GoodsReceiptEntity>;
     cancelGr(id: string, req: any): Promise<import("./entities/goods-receipt.entity").GoodsReceiptEntity>;
     findAllSrs(query: QueryProcurementDto): Promise<{
-        items: import("./entities/supplier-return.entity").SupplierReturnEntity[];
+        items: (import("./entities/supplier-return.entity").SupplierReturnEntity & {
+            totalRefund: string;
+        })[];
         meta: {
             page: number;
             limit: number;
@@ -52,8 +54,14 @@ export declare class ProcurementController {
             totalPages: number;
         };
     }>;
-    findOneSr(id: string): Promise<import("./entities/supplier-return.entity").SupplierReturnEntity>;
-    createSr(dto: CreateSrDto, req: any): Promise<import("./entities/supplier-return.entity").SupplierReturnEntity>;
-    confirmSr(id: string, req: any): Promise<import("./entities/supplier-return.entity").SupplierReturnEntity>;
+    findOneSr(id: string): Promise<import("./entities/supplier-return.entity").SupplierReturnEntity & {
+        totalRefund: string;
+    }>;
+    createSr(dto: CreateSrDto, req: any): Promise<import("./entities/supplier-return.entity").SupplierReturnEntity & {
+        totalRefund: string;
+    }>;
+    confirmSr(id: string, req: any): Promise<import("./entities/supplier-return.entity").SupplierReturnEntity & {
+        totalRefund: string;
+    }>;
     getCostHistory(productId: string): Promise<import("./entities/product-cost-history.entity").ProductCostHistoryEntity[]>;
 }

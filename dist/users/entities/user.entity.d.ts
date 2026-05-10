@@ -4,6 +4,12 @@ export declare enum UserRole {
     STAFF = "staff",
     CUSTOMER = "customer"
 }
+export declare enum MembershipTier {
+    NONE = "none",
+    SILVER = "silver",
+    GOLD = "gold",
+    DIAMOND = "diamond"
+}
 export declare class UserEntity {
     userId: string;
     username: string;
@@ -18,6 +24,8 @@ export declare class UserEntity {
     isActive: boolean;
     resetPasswordCode: string | null;
     resetPasswordExpiresAt: Date | null;
+    membershipTier: MembershipTier;
+    totalSpent: string;
     createdAt: Date;
     updatedAt: Date;
     refreshTokens?: RefreshTokenEntity[];

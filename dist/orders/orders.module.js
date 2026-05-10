@@ -42,6 +42,7 @@ const shipping_address_entity_1 = require("./entities/shipping-address.entity");
 const orders_admin_gateway_1 = require("./orders-admin.gateway");
 const orders_admin_publisher_1 = require("./orders-admin.publisher");
 const orders_service_1 = require("./orders.service");
+const membership_module_1 = require("../membership/membership.module");
 let OrdersModule = class OrdersModule {
 };
 exports.OrdersModule = OrdersModule;
@@ -52,6 +53,7 @@ exports.OrdersModule = OrdersModule = __decorate([
             notifications_module_1.NotificationsModule,
             roles_module_1.RolesModule,
             settings_module_1.SettingsModule,
+            membership_module_1.MembershipModule,
             typeorm_1.TypeOrmModule.forFeature([
                 delivery_method_entity_1.DeliveryMethodEntity,
                 shipping_address_entity_1.ShippingAddressEntity,

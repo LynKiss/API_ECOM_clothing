@@ -19,6 +19,7 @@ let CategoryEntity = class CategoryEntity {
     parentId;
     isActive;
     sortOrder;
+    imageUrl;
     createdAt;
     updatedAt;
     parent;
@@ -83,6 +84,15 @@ __decorate([
     }),
     __metadata("design:type", Number)
 ], CategoryEntity.prototype, "sortOrder", void 0);
+__decorate([
+    (0, typeorm_1.Column)({
+        name: 'image_url',
+        type: 'varchar',
+        length: 500,
+        nullable: true,
+    }),
+    __metadata("design:type", Object)
+], CategoryEntity.prototype, "imageUrl", void 0);
 __decorate([
     (0, typeorm_1.CreateDateColumn)({
         name: 'created_at',

@@ -47,6 +47,7 @@ const order_status_history_entity_1 = require("./entities/order-status-history.e
 const payment_transaction_entity_1 = require("./entities/payment-transaction.entity");
 const return_entity_1 = require("./entities/return.entity");
 const shipping_address_entity_1 = require("./entities/shipping-address.entity");
+const membership_service_1 = require("../membership/membership.service");
 let OrdersService = OrdersService_1 = class OrdersService {
     deliveryMethodsRepository;
     shippingAddressesRepository;
@@ -71,10 +72,11 @@ let OrdersService = OrdersService_1 = class OrdersService {
     notificationsService;
     ordersAdminPublisher;
     settingsService;
+    membershipService;
     logger = new common_1.Logger(OrdersService_1.name);
     liveTrackingFreshnessMs = 2 * 60 * 1000;
     stalePaymentTtlMs = 30 * 60 * 1000;
-    constructor(deliveryMethodsRepository, shippingAddressesRepository, ordersRepository, orderTrackingRepository, orderItemsRepository, orderStatusHistoryRepository, cartsRepository, cartItemsRepository, productsRepository, productVariantsRepository, colorsRepository, sizesRepository, inventoryTransactionsRepository, usersRepository, discountsRepository, discountCategoriesRepository, discountProductsRepository, couponUsageRepository, returnsRepository, paymentTransactionsRepository, notificationsService, ordersAdminPublisher, settingsService) {
+    constructor(deliveryMethodsRepository, shippingAddressesRepository, ordersRepository, orderTrackingRepository, orderItemsRepository, orderStatusHistoryRepository, cartsRepository, cartItemsRepository, productsRepository, productVariantsRepository, colorsRepository, sizesRepository, inventoryTransactionsRepository, usersRepository, discountsRepository, discountCategoriesRepository, discountProductsRepository, couponUsageRepository, returnsRepository, paymentTransactionsRepository, notificationsService, ordersAdminPublisher, settingsService, membershipService) {
         this.deliveryMethodsRepository = deliveryMethodsRepository;
         this.shippingAddressesRepository = shippingAddressesRepository;
         this.ordersRepository = ordersRepository;
@@ -98,6 +100,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
         this.notificationsService = notificationsService;
         this.ordersAdminPublisher = ordersAdminPublisher;
         this.settingsService = settingsService;
+        this.membershipService = membershipService;
     }
     async syncDefaultWarehouseStock(em, productId, qtyDelta) {
         if (qtyDelta === 0)
@@ -503,7 +506,6 @@ let OrdersService = OrdersService_1 = class OrdersService {
             [order_entity_1.OrderStatus.PROCESSING]: [order_entity_1.OrderStatus.SHIPPING, order_entity_1.OrderStatus.CANCELLED],
             [order_entity_1.OrderStatus.SHIPPING]: [
                 order_entity_1.OrderStatus.DELIVERED,
-                order_entity_1.OrderStatus.PARTIAL_DELIVERED,
                 order_entity_1.OrderStatus.RETURNED,
             ],
             [order_entity_1.OrderStatus.PARTIAL_DELIVERED]: [order_entity_1.OrderStatus.RETURNED],
@@ -1268,6 +1270,9 @@ let OrdersService = OrdersService_1 = class OrdersService {
         });
         const updatedOrder = await this.findAnyOrder(orderId);
         await this.notificationsService.sendOrderStatusNotification(updatedOrder.userId, orderId, nextStatus);
+        if (nextStatus === order_entity_1.OrderStatus.DELIVERED && updatedOrder.userId) {
+            void this.membershipService.recalculateAndReward(updatedOrder.userId);
+        }
         return this.buildOrderDetail(updatedOrder);
     }
     async initiatePayment(currentUser, orderId, initiatePaymentDto) {
@@ -1866,7 +1871,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
             }));
         }));
         await this.notificationsService.sendOrderStatusNotification(order.userId, order.orderId, order.orderStatus);
-        return this.findAnyOrder(order.orderId);
+        return this.buildOrderDetail(await this.findAnyOrder(order.orderId));
     }
     async inspectReturn(currentUser, returnId, decision, note) {
         await this.ensureUserExists(currentUser._id);
@@ -1988,6 +1993,7 @@ exports.OrdersService = OrdersService = OrdersService_1 = __decorate([
         typeorm_2.Repository,
         notifications_service_1.NotificationsService,
         orders_admin_publisher_1.OrdersAdminPublisher,
-        settings_service_1.SettingsService])
+        settings_service_1.SettingsService,
+        membership_service_1.MembershipService])
 ], OrdersService);
 //# sourceMappingURL=orders.service.js.map

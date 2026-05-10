@@ -19,7 +19,6 @@ let ProductCostHistoryEntity = class ProductCostHistoryEntity {
     qtyAtReceipt;
     effectiveDate;
     notes;
-    createdAt;
 };
 exports.ProductCostHistoryEntity = ProductCostHistoryEntity;
 __decorate([
@@ -50,10 +49,6 @@ __decorate([
     (0, typeorm_1.Column)({ name: 'notes', type: 'text', nullable: true }),
     __metadata("design:type", Object)
 ], ProductCostHistoryEntity.prototype, "notes", void 0);
-__decorate([
-    (0, typeorm_1.CreateDateColumn)({ name: 'created_at', type: 'datetime' }),
-    __metadata("design:type", Date)
-], ProductCostHistoryEntity.prototype, "createdAt", void 0);
 exports.ProductCostHistoryEntity = ProductCostHistoryEntity = __decorate([
     (0, typeorm_1.Entity)({ name: 'product_cost_history' })
 ], ProductCostHistoryEntity);

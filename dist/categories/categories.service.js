@@ -14,6 +14,7 @@ var __param = (this && this.__param) || function (paramIndex, decorator) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CategoriesService = void 0;
 const common_1 = require("@nestjs/common");
+const crypto_1 = require("crypto");
 const typeorm_1 = require("@nestjs/typeorm");
 const typeorm_2 = require("typeorm");
 const category_entity_1 = require("./entities/category.entity");
@@ -147,6 +148,17 @@ let CategoriesService = class CategoriesService {
         }
         return this.findTreeForAdmin();
     }
+    async uploadImage(categoryId, file) {
+        if (!file) {
+            throw new common_1.BadRequestException('Image file is required');
+        }
+        if (!file.mimetype?.startsWith('image/')) {
+            throw new common_1.BadRequestException('Only image files are allowed');
+        }
+        const category = await this.findOne(categoryId);
+        category.imageUrl = await this.uploadImageToCloudinary(file, `category-${category.categorySlug || category.categoryId}`);
+        return this.categoriesRepository.save(category);
+    }
     async remove(categoryId) {
         const category = await this.findOne(categoryId);
         const childCount = await this.categoriesRepository.count({
@@ -230,6 +242,7 @@ let CategoriesService = class CategoriesService {
                 parentId: category.parentId,
                 isActive: category.isActive,
                 sortOrder: category.sortOrder,
+                imageUrl: category.imageUrl ?? null,
                 directProductCount: directProductCounts.get(category.categoryId) ?? 0,
                 productCount: directProductCounts.get(category.categoryId) ?? 0,
                 createdAt: category.createdAt,
@@ -279,6 +292,33 @@ let CategoriesService = class CategoriesService {
             .toLowerCase()
             .replace(/[^a-z0-9]+/g, '-')
             .replace(/^-+|-+$/g, '');
+    }
+    async uploadImageToCloudinary(file, publicIdPrefix) {
+        const cloudName = process.env.CLOUD_NAME;
+        const apiKey = process.env.API_KEY;
+        const apiSecret = process.env.API_SECRET;
+        if (!cloudName || !apiKey || !apiSecret) {
+            throw new common_1.InternalServerErrorException('Cloudinary environment variables are missing');
+        }
+        const folder = 'agri_ecommerce/categories';
+        const timestamp = Math.floor(Date.now() / 1000);
+        const publicId = `${publicIdPrefix}-${Date.now()}`;
+        const signature = (0, crypto_1.createHash)('sha1')
+            .update(`folder=${folder}&public_id=${publicId}&timestamp=${timestamp}${apiSecret}`)
+            .digest('hex');
+        const formData = new FormData();
+        formData.append('file', new Blob([new Uint8Array(file.buffer)], { type: file.mimetype }), file.originalname);
+        formData.append('api_key', apiKey);
+        formData.append('timestamp', String(timestamp));
+        formData.append('signature', signature);
+        formData.append('folder', folder);
+        formData.append('public_id', publicId);
+        const response = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, { method: 'POST', body: formData });
+        const payload = (await response.json());
+        if (!response.ok || !payload.secure_url) {
+            throw new common_1.InternalServerErrorException(payload.error?.message ?? 'Unable to upload image to Cloudinary');
+        }
+        return payload.secure_url;
     }
 };
 exports.CategoriesService = CategoriesService;

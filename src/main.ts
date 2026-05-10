@@ -20,6 +20,7 @@ async function bootstrap() {
   app.useGlobalGuards(new JwtAuthGuard(reflector));
 
   app.useStaticAssets(join(__dirname, '..', 'public'));
+  app.useStaticAssets(join(process.cwd(), 'uploads'), { prefix: '/uploads' });
   app.setBaseViewsDir(join(__dirname, '..', 'views'));
   app.setViewEngine('ejs');
 

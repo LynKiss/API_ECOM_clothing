@@ -9,11 +9,10 @@ import {
 import { StockAdjustmentItemEntity } from './stock-adjustment-item.entity';
 
 export enum AdjustmentReason {
-  DAMAGE = 'damage',
-  LOSS = 'loss',
   INVENTORY_COUNT = 'inventory_count',
-  SAMPLE = 'sample',
-  INTERNAL_USE = 'internal_use',
+  DAMAGE = 'damage',
+  EXPIRED = 'expired',
+  LOST = 'lost',
   OTHER = 'other',
 }
 

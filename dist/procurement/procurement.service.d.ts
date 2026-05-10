@@ -31,6 +31,8 @@ export declare class ProcurementService {
     private readonly cache;
     constructor(poRepo: Repository<PurchaseOrderEntity>, poItemRepo: Repository<PurchaseOrderItemEntity>, grRepo: Repository<GoodsReceiptEntity>, grItemRepo: Repository<GoodsReceiptItemEntity>, srRepo: Repository<SupplierReturnEntity>, srItemRepo: Repository<SupplierReturnItemEntity>, costHistRepo: Repository<ProductCostHistoryEntity>, productRepo: Repository<ProductEntity>, productVariantRepo: Repository<ProductVariantEntity>, txRepo: Repository<InventoryTransactionEntity>, dataSource: DataSource, auditLogs: AuditLogsService, cache: SimpleCacheService);
     private readonly procurementLogger;
+    private supplierReturnTotal;
+    private attachSupplierReturnTotals;
     private ensureProductAndVariant;
     private findVariantForUpdate;
     private syncDefaultWarehouseStock;
@@ -82,7 +84,9 @@ export declare class ProcurementService {
         ip?: string;
     }): Promise<GoodsReceiptEntity>;
     findAllSrs(query: QueryProcurementDto): Promise<{
-        items: SupplierReturnEntity[];
+        items: (SupplierReturnEntity & {
+            totalRefund: string;
+        })[];
         meta: {
             page: number;
             limit: number;
@@ -90,17 +94,23 @@ export declare class ProcurementService {
             totalPages: number;
         };
     }>;
-    findOneSr(id: string): Promise<SupplierReturnEntity>;
+    findOneSr(id: string): Promise<SupplierReturnEntity & {
+        totalRefund: string;
+    }>;
     createSr(dto: CreateSrDto, performer?: {
         userId: string;
         username: string;
         ip?: string;
-    }): Promise<SupplierReturnEntity>;
+    }): Promise<SupplierReturnEntity & {
+        totalRefund: string;
+    }>;
     confirmSr(id: string, performer?: {
         userId: string;
         username: string;
         ip?: string;
-    }): Promise<SupplierReturnEntity>;
+    }): Promise<SupplierReturnEntity & {
+        totalRefund: string;
+    }>;
     getCostHistory(productId: string): Promise<ProductCostHistoryEntity[]>;
     previewGrCost(dto: CreateGrDto): {
         productId: string;

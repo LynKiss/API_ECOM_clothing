@@ -10,7 +10,7 @@ import { GoodsReceiptItemEntity } from './goods-receipt-item.entity';
 
 export enum GoodsReceiptStatus {
   DRAFT = 'draft',
-  CONFIRMED = 'confirmed',
+  POSTED = 'posted',
   CANCELLED = 'cancelled',
 }
 

@@ -40,6 +40,7 @@ import { BannersModule } from './banners/banners.module';
 import { VirtualTryOnModule } from './virtual-try-on/virtual-try-on.module';
 import { SuperAdminModule } from './super-admin/super-admin.module';
 import { SuperAdminSyncModule } from './super-admin-sync/super-admin-sync.module';
+import { MembershipModule } from './membership/membership.module';
 
 @Module({
   imports: [
@@ -88,6 +89,7 @@ import { SuperAdminSyncModule } from './super-admin-sync/super-admin-sync.module
     VirtualTryOnModule,
     IntelligenceModule,
     HealthModule,
+    MembershipModule,
   ],
   controllers: [AppController],
   providers: [

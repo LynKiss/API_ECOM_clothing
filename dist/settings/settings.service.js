@@ -13,7 +13,7 @@ var __param = (this && this.__param) || function (paramIndex, decorator) {
 };
 var SettingsService_1;
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.SettingsService = exports.createDefaultClientFeatureSettings = exports.createDefaultAdminSidebarSettings = exports.createDefaultSmtpSettings = exports.createDefaultPaymentSettings = exports.PAYMENT_METHOD_KEYS = void 0;
+exports.SettingsService = exports.createDefaultClientFeatureSettings = exports.createDefaultAdminSidebarSettings = exports.createDefaultSmtpSettings = exports.createDefaultPaymentSettings = exports.createDefaultMembershipTierSettings = exports.PAYMENT_METHOD_KEYS = void 0;
 const common_1 = require("@nestjs/common");
 const config_1 = require("@nestjs/config");
 const typeorm_1 = require("@nestjs/typeorm");
@@ -30,6 +30,13 @@ const PAYMENT_SETTINGS_KEY = 'commerce_payments';
 const SMTP_SETTINGS_KEY = 'commerce_smtp';
 const ADMIN_SIDEBAR_SETTINGS_KEY = 'admin_sidebar';
 const CLIENT_FEATURE_SETTINGS_KEY = 'client_features';
+const MEMBERSHIP_TIERS_KEY = 'membership_tiers';
+const createDefaultMembershipTierSettings = () => [
+    { tier: 'silver', label: 'Bạc', minSpent: 3_000_000, discountPercent: 5, couponValidDays: 30 },
+    { tier: 'gold', label: 'Vàng', minSpent: 10_000_000, discountPercent: 10, couponValidDays: 60 },
+    { tier: 'diamond', label: 'Kim Cương', minSpent: 20_000_000, discountPercent: 15, couponValidDays: 90 },
+];
+exports.createDefaultMembershipTierSettings = createDefaultMembershipTierSettings;
 const createDefaultPaymentSettings = () => ({
     cod: {
         isActive: true,
@@ -146,6 +153,39 @@ let SettingsService = SettingsService_1 = class SettingsService {
         const nextValue = this.normalizeClientFeatureSettings(value);
         await this.saveJsonSetting(CLIENT_FEATURE_SETTINGS_KEY, nextValue);
         return nextValue;
+    }
+    async getMembershipTierSettings() {
+        return this.getJsonSetting(MEMBERSHIP_TIERS_KEY, (0, exports.createDefaultMembershipTierSettings)(), (value) => this.normalizeMembershipTierSettings(value));
+    }
+    async saveMembershipTierSettings(value) {
+        const nextValue = this.normalizeMembershipTierSettings(value);
+        await this.saveJsonSetting(MEMBERSHIP_TIERS_KEY, nextValue);
+        return nextValue;
+    }
+    normalizeMembershipTierSettings(value) {
+        const defaults = (0, exports.createDefaultMembershipTierSettings)();
+        if (!Array.isArray(value))
+            return defaults;
+        const tiers = [];
+        for (const item of value) {
+            const src = this.asRecord(item);
+            if (!src)
+                continue;
+            const tier = this.asString(src.tier);
+            if (!['silver', 'gold', 'diamond'].includes(tier))
+                continue;
+            const def = defaults.find((d) => d.tier === tier);
+            tiers.push({
+                tier,
+                label: this.asString(src.label) || def.label,
+                minSpent: typeof src.minSpent === 'number' ? src.minSpent : def.minSpent,
+                discountPercent: typeof src.discountPercent === 'number' ? src.discountPercent : def.discountPercent,
+                couponValidDays: typeof src.couponValidDays === 'number' ? src.couponValidDays : def.couponValidDays,
+            });
+        }
+        if (tiers.length === 0)
+            return defaults;
+        return tiers.sort((a, b) => b.minSpent - a.minSpent);
     }
     async getResolvedSmtpConfig() {
         const smtp = await this.getSmtpSettings();

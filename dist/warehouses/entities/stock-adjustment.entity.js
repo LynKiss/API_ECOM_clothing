@@ -14,11 +14,10 @@ const typeorm_1 = require("typeorm");
 const stock_adjustment_item_entity_1 = require("./stock-adjustment-item.entity");
 var AdjustmentReason;
 (function (AdjustmentReason) {
-    AdjustmentReason["DAMAGE"] = "damage";
-    AdjustmentReason["LOSS"] = "loss";
     AdjustmentReason["INVENTORY_COUNT"] = "inventory_count";
-    AdjustmentReason["SAMPLE"] = "sample";
-    AdjustmentReason["INTERNAL_USE"] = "internal_use";
+    AdjustmentReason["DAMAGE"] = "damage";
+    AdjustmentReason["EXPIRED"] = "expired";
+    AdjustmentReason["LOST"] = "lost";
     AdjustmentReason["OTHER"] = "other";
 })(AdjustmentReason || (exports.AdjustmentReason = AdjustmentReason = {}));
 var AdjustmentStatus;

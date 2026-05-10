@@ -2,6 +2,11 @@ import { CreateCategoryDto } from './dto/create-category.dto';
 import { ReorderCategoryDto } from './dto/reorder-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 import { CategoriesService } from './categories.service';
+type UploadedImageFile = {
+    buffer: Buffer;
+    originalname: string;
+    mimetype: string;
+};
 export declare class CategoriesController {
     private readonly categoriesService;
     constructor(categoriesService: CategoriesService);
@@ -12,8 +17,10 @@ export declare class CategoriesController {
     getCategory(id: string): Promise<import("./entities/category.entity").CategoryEntity>;
     createCategory(createCategoryDto: CreateCategoryDto): Promise<import("./entities/category.entity").CategoryEntity>;
     updateCategory(id: string, updateCategoryDto: UpdateCategoryDto): Promise<import("./entities/category.entity").CategoryEntity>;
+    uploadImage(id: string, file: UploadedImageFile): Promise<import("./entities/category.entity").CategoryEntity>;
     reorderCategory(id: string, reorderCategoryDto: ReorderCategoryDto): Promise<any>;
     removeCategory(id: string): Promise<{
         success: boolean;
     }>;
 }
+export {};

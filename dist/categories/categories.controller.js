@@ -14,6 +14,7 @@ var __param = (this && this.__param) || function (paramIndex, decorator) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CategoriesController = void 0;
 const common_1 = require("@nestjs/common");
+const platform_express_1 = require("@nestjs/platform-express");
 const customize_1 = require("../decorator/customize");
 const create_category_dto_1 = require("./dto/create-category.dto");
 const reorder_category_dto_1 = require("./dto/reorder-category.dto");
@@ -44,6 +45,9 @@ let CategoriesController = class CategoriesController {
     }
     updateCategory(id, updateCategoryDto) {
         return this.categoriesService.update(id, updateCategoryDto);
+    }
+    uploadImage(id, file) {
+        return this.categoriesService.uploadImage(id, file);
     }
     reorderCategory(id, reorderCategoryDto) {
         return this.categoriesService.reorder(id, reorderCategoryDto);
@@ -113,6 +117,17 @@ __decorate([
     __metadata("design:paramtypes", [String, update_category_dto_1.UpdateCategoryDto]),
     __metadata("design:returntype", void 0)
 ], CategoriesController.prototype, "updateCategory", null);
+__decorate([
+    (0, common_1.Post)(':id/image'),
+    (0, customize_1.RequirePermissions)('manage_products'),
+    (0, customize_1.ResponseMessage)('Upload category image'),
+    (0, common_1.UseInterceptors)((0, platform_express_1.FileInterceptor)('file')),
+    __param(0, (0, common_1.Param)('id')),
+    __param(1, (0, common_1.UploadedFile)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object]),
+    __metadata("design:returntype", void 0)
+], CategoriesController.prototype, "uploadImage", null);
 __decorate([
     (0, common_1.Patch)(':id/reorder'),
     (0, customize_1.RequirePermissions)('manage_products'),

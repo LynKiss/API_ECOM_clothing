@@ -6,7 +6,10 @@ import {
   Param,
   Patch,
   Post,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import {
   Public,
   RequirePermissions,
@@ -16,6 +19,12 @@ import { CreateCategoryDto } from './dto/create-category.dto';
 import { ReorderCategoryDto } from './dto/reorder-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 import { CategoriesService } from './categories.service';
+
+type UploadedImageFile = {
+  buffer: Buffer;
+  originalname: string;
+  mimetype: string;
+};
 
 @Controller('categories')
 export class CategoriesController {
@@ -71,6 +80,14 @@ export class CategoriesController {
     @Body() updateCategoryDto: UpdateCategoryDto,
   ) {
     return this.categoriesService.update(id, updateCategoryDto);
+  }
+
+  @Post(':id/image')
+  @RequirePermissions('manage_products')
+  @ResponseMessage('Upload category image')
+  @UseInterceptors(FileInterceptor('file'))
+  uploadImage(@Param('id') id: string, @UploadedFile() file: UploadedImageFile) {
+    return this.categoriesService.uploadImage(id, file);
   }
 
   @Patch(':id/reorder')

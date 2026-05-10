@@ -5,10 +5,10 @@ export class WarehouseEntity {
   @PrimaryColumn({ name: 'warehouse_id', type: 'char', length: 36 })
   warehouseId!: string;
 
-  @Column({ name: 'name', type: 'varchar', length: 255 })
+  @Column({ name: 'warehouse_name', type: 'varchar', length: 150 })
   name!: string;
 
-  @Column({ name: 'code', type: 'varchar', length: 50, unique: true, nullable: true })
+  @Column({ name: 'warehouse_code', type: 'varchar', length: 50, unique: true, nullable: true })
   code!: string | null;
 
   @Column({ name: 'address', type: 'text', nullable: true })

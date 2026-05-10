@@ -10,7 +10,7 @@ import { StockTransferItemEntity } from './stock-transfer-item.entity';
 
 export enum StockTransferStatus {
   DRAFT = 'draft',
-  SHIPPING = 'shipping',
+  SHIPPED = 'shipped',
   RECEIVED = 'received',
   CANCELLED = 'cancelled',
 }

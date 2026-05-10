@@ -35,6 +35,15 @@ export type AdminSidebarSettings = {
 export type ClientFeatureSettings = {
     productRecommendationsEnabled: boolean;
 };
+export type MembershipTierSetting = {
+    tier: 'silver' | 'gold' | 'diamond';
+    minSpent: number;
+    discountPercent: number;
+    couponValidDays: number;
+    label: string;
+};
+export type MembershipTierSettings = MembershipTierSetting[];
+export declare const createDefaultMembershipTierSettings: () => MembershipTierSettings;
 export declare const createDefaultPaymentSettings: () => PaymentSettings;
 export declare const createDefaultSmtpSettings: () => SmtpSettings;
 export declare const createDefaultAdminSidebarSettings: () => AdminSidebarSettings;
@@ -61,6 +70,9 @@ export declare class SettingsService {
     saveAdminSidebarSettings(value: unknown): Promise<AdminSidebarSettings>;
     getClientFeatureSettings(): Promise<ClientFeatureSettings>;
     saveClientFeatureSettings(value: unknown): Promise<ClientFeatureSettings>;
+    getMembershipTierSettings(): Promise<MembershipTierSettings>;
+    saveMembershipTierSettings(value: unknown): Promise<MembershipTierSettings>;
+    private normalizeMembershipTierSettings;
     getResolvedSmtpConfig(): Promise<{
         host: string;
         port: number;

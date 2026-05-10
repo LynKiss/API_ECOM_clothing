@@ -89,6 +89,23 @@ let ProcurementService = ProcurementService_1 = class ProcurementService {
         this.cache = cache;
     }
     procurementLogger = new common_2.Logger(ProcurementService_1.name);
+    supplierReturnTotal(items = []) {
+        const total = items.reduce((sum, item) => sum + (item.hasRefund ? Number(item.refundAmount ?? 0) : 0), 0);
+        return total.toFixed(2);
+    }
+    async attachSupplierReturnTotals(returns) {
+        const ids = returns.map((sr) => sr.srId);
+        if (ids.length === 0)
+            return returns.map((sr) => Object.assign(sr, { totalRefund: '0.00' }));
+        const items = await this.srItemRepo.find({ where: { srId: (0, typeorm_2.In)(ids) } });
+        const totals = new Map();
+        for (const item of items) {
+            if (!item.hasRefund)
+                continue;
+            totals.set(item.srId, (totals.get(item.srId) ?? 0) + Number(item.refundAmount ?? 0));
+        }
+        return returns.map((sr) => Object.assign(sr, { totalRefund: (totals.get(sr.srId) ?? 0).toFixed(2) }));
+    }
     async ensureProductAndVariant(productId, variantId) {
         const product = await this.productRepo.findOneBy({ productId });
         if (!product) {
@@ -381,6 +398,21 @@ let ProcurementService = ProcurementService_1 = class ProcurementService {
         for (const item of dto.items) {
             await this.ensureProductAndVariant(item.productId, item.variantId);
         }
+        if (dto.poId) {
+            const linkedPo = await this.poRepo.findOne({ where: { poId: dto.poId } });
+            if (!linkedPo) {
+                throw new common_1.BadRequestException(`Không tìm thấy PO ${dto.poId}`);
+            }
+            if (linkedPo.supplierId !== dto.supplierId) {
+                throw new common_1.BadRequestException('Nhà cung cấp phiếu nhận phải khớp với nhà cung cấp của PO liên kết');
+            }
+            if (linkedPo.status === purchase_order_entity_1.PurchaseOrderStatus.CANCELLED) {
+                throw new common_1.BadRequestException('Không thể tạo phiếu nhận cho PO đã hủy');
+            }
+            if (linkedPo.status === purchase_order_entity_1.PurchaseOrderStatus.RECEIVED) {
+                throw new common_1.BadRequestException('PO này đã nhận đủ hàng');
+            }
+        }
         const shippingCost = dto.shippingCost ?? 0;
         const otherCost = dto.otherCost ?? 0;
         const totalExtraCost = shippingCost + otherCost;
@@ -496,7 +528,7 @@ let ProcurementService = ProcurementService_1 = class ProcurementService {
                     referenceId: gr.grId,
                     unitCostAtTime: item.landedCost,
                     note: `Nhập kho từ phiếu ${gr.grCode}`,
-                    relatedOrderId: gr.grId,
+                    relatedOrderId: null,
                 });
                 await em.save(inventory_transaction_entity_1.InventoryTransactionEntity, tx);
                 if (defaultWarehouse) {
@@ -522,7 +554,7 @@ let ProcurementService = ProcurementService_1 = class ProcurementService {
                     await updateQb.execute();
                 }
             }
-            await em.update(goods_receipt_entity_1.GoodsReceiptEntity, { grId: id }, { status: goods_receipt_entity_1.GoodsReceiptStatus.CONFIRMED });
+            await em.update(goods_receipt_entity_1.GoodsReceiptEntity, { grId: id }, { status: goods_receipt_entity_1.GoodsReceiptStatus.POSTED });
             if (gr.poId) {
                 const poItems = await em.find(purchase_order_item_entity_1.PurchaseOrderItemEntity, { where: { poId: gr.poId } });
                 const allReceived = poItems.every((i) => i.qtyReceived >= i.qtyOrdered);
@@ -544,13 +576,13 @@ let ProcurementService = ProcurementService_1 = class ProcurementService {
             action: 'CONFIRM',
             changedBy: performer?.username,
             ipAddress: performer?.ip,
-            afterData: { grCode: gr.grCode, status: goods_receipt_entity_1.GoodsReceiptStatus.CONFIRMED },
+            afterData: { grCode: gr.grCode, status: goods_receipt_entity_1.GoodsReceiptStatus.POSTED },
         });
         return this.findOneGr(id);
     }
     async cancelGr(id, performer) {
         const gr = await this.findOneGr(id);
-        if (gr.status === goods_receipt_entity_1.GoodsReceiptStatus.CONFIRMED) {
+        if (gr.status === goods_receipt_entity_1.GoodsReceiptStatus.POSTED) {
             throw new common_1.BadRequestException('Không thể hủy phiếu đã xác nhận. Hãy tạo phiếu trả hàng.');
         }
         await this.grRepo.update({ grId: id }, { status: goods_receipt_entity_1.GoodsReceiptStatus.CANCELLED });
@@ -576,14 +608,14 @@ let ProcurementService = ProcurementService_1 = class ProcurementService {
         if (supplierId)
             qb.andWhere('sr.supplierId = :supplierId', { supplierId });
         const total = await qb.getCount();
-        const items = await qb.skip((page - 1) * limit).take(limit).getMany();
+        const items = await this.attachSupplierReturnTotals(await qb.skip((page - 1) * limit).take(limit).getMany());
         return { items, meta: { page, limit, total, totalPages: Math.ceil(total / limit) } };
     }
     async findOneSr(id) {
         const sr = await this.srRepo.findOne({ where: { srId: id }, relations: ['items'] });
         if (!sr)
             throw new common_1.NotFoundException('Không tìm thấy phiếu trả hàng NCC');
-        return sr;
+        return Object.assign(sr, { totalRefund: this.supplierReturnTotal(sr.items) });
     }
     async createSr(dto, performer) {
         for (const item of dto.items) {
@@ -597,7 +629,6 @@ let ProcurementService = ProcurementService_1 = class ProcurementService {
             supplierId: dto.supplierId,
             returnDate: new Date(dto.returnDate),
             status: supplier_return_entity_1.SupplierReturnStatus.DRAFT,
-            totalRefund: String(totalRefund),
             notes: dto.notes ?? null,
             createdBy: performer?.userId ?? null,
         });
@@ -621,9 +652,9 @@ let ProcurementService = ProcurementService_1 = class ProcurementService {
             action: 'CREATE',
             changedBy: performer?.username,
             ipAddress: performer?.ip,
-            afterData: { srCode: saved.srCode, supplierId: saved.supplierId, totalRefund: saved.totalRefund },
+            afterData: { srCode: saved.srCode, supplierId: saved.supplierId, totalRefund },
         });
-        return saved;
+        return Object.assign(saved, { totalRefund: totalRefund.toFixed(2) });
     }
     async confirmSr(id, performer) {
         const sr = await this.findOneSr(id);
@@ -662,14 +693,14 @@ let ProcurementService = ProcurementService_1 = class ProcurementService {
                     referenceType: 'SR',
                     referenceId: sr.srId,
                     note: `Trả hàng NCC từ phiếu ${sr.srCode} — ${item.reason ?? ''}`,
-                    relatedOrderId: sr.srId,
+                    relatedOrderId: null,
                 });
                 await em.save(inventory_transaction_entity_1.InventoryTransactionEntity, tx);
                 if (defaultWarehouse) {
                     await this.syncDefaultWarehouseStock(em, defaultWarehouse.warehouseId, item.productId, -item.qtyReturned, variant?.variantId ?? null);
                 }
             }
-            await em.update(supplier_return_entity_1.SupplierReturnEntity, { srId: id }, { status: supplier_return_entity_1.SupplierReturnStatus.CONFIRMED });
+            await em.update(supplier_return_entity_1.SupplierReturnEntity, { srId: id }, { status: supplier_return_entity_1.SupplierReturnStatus.POSTED });
         });
         void this.auditLogs.log({
             entityType: 'SR',
@@ -677,7 +708,7 @@ let ProcurementService = ProcurementService_1 = class ProcurementService {
             action: 'CONFIRM',
             changedBy: performer?.username,
             ipAddress: performer?.ip,
-            afterData: { srCode: sr.srCode, status: supplier_return_entity_1.SupplierReturnStatus.CONFIRMED },
+            afterData: { srCode: sr.srCode, status: supplier_return_entity_1.SupplierReturnStatus.POSTED },
         });
         return this.findOneSr(id);
     }

@@ -12,11 +12,17 @@ export type CategoryTreeNode = {
     parentId: string | null;
     isActive: boolean;
     sortOrder: number;
+    imageUrl: string | null;
     directProductCount: number;
     productCount: number;
     createdAt: Date;
     updatedAt: Date;
     children: CategoryTreeNode[];
+};
+type UploadedImageFile = {
+    buffer: Buffer;
+    originalname: string;
+    mimetype: string;
 };
 export declare class CategoriesService {
     private readonly categoriesRepository;
@@ -30,6 +36,7 @@ export declare class CategoriesService {
     create(createCategoryDto: CreateCategoryDto): Promise<CategoryEntity>;
     update(categoryId: string, updateCategoryDto: UpdateCategoryDto): Promise<CategoryEntity>;
     reorder(categoryId: string, reorderCategoryDto: ReorderCategoryDto): Promise<any>;
+    uploadImage(categoryId: string, file: UploadedImageFile): Promise<CategoryEntity>;
     remove(categoryId: string): Promise<{
         success: boolean;
     }>;
@@ -41,4 +48,6 @@ export declare class CategoriesService {
     private getProductCountsByCategory;
     private getNextSortOrder;
     private normalizeSlug;
+    private uploadImageToCloudinary;
 }
+export {};

@@ -1,7 +1,7 @@
 import { SupplierReturnItemEntity } from './supplier-return-item.entity';
 export declare enum SupplierReturnStatus {
     DRAFT = "draft",
-    CONFIRMED = "confirmed",
+    POSTED = "posted",
     CANCELLED = "cancelled"
 }
 export declare class SupplierReturnEntity {
@@ -11,7 +11,6 @@ export declare class SupplierReturnEntity {
     supplierId: string;
     returnDate: Date;
     status: SupplierReturnStatus;
-    totalRefund: string;
     notes: string | null;
     createdBy: string | null;
     items: SupplierReturnItemEntity[];

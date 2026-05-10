@@ -15,7 +15,7 @@ const supplier_return_item_entity_1 = require("./supplier-return-item.entity");
 var SupplierReturnStatus;
 (function (SupplierReturnStatus) {
     SupplierReturnStatus["DRAFT"] = "draft";
-    SupplierReturnStatus["CONFIRMED"] = "confirmed";
+    SupplierReturnStatus["POSTED"] = "posted";
     SupplierReturnStatus["CANCELLED"] = "cancelled";
 })(SupplierReturnStatus || (exports.SupplierReturnStatus = SupplierReturnStatus = {}));
 let SupplierReturnEntity = class SupplierReturnEntity {
@@ -25,7 +25,6 @@ let SupplierReturnEntity = class SupplierReturnEntity {
     supplierId;
     returnDate;
     status;
-    totalRefund;
     notes;
     createdBy;
     items;
@@ -57,10 +56,6 @@ __decorate([
     (0, typeorm_1.Column)({ name: 'status', type: 'enum', enum: SupplierReturnStatus, default: SupplierReturnStatus.DRAFT }),
     __metadata("design:type", String)
 ], SupplierReturnEntity.prototype, "status", void 0);
-__decorate([
-    (0, typeorm_1.Column)({ name: 'total_refund', type: 'decimal', precision: 15, scale: 2, default: 0 }),
-    __metadata("design:type", String)
-], SupplierReturnEntity.prototype, "totalRefund", void 0);
 __decorate([
     (0, typeorm_1.Column)({ name: 'notes', type: 'text', nullable: true }),
     __metadata("design:type", Object)

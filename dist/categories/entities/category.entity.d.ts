@@ -6,6 +6,7 @@ export declare class CategoryEntity {
     parentId: string | null;
     isActive: boolean;
     sortOrder: number;
+    imageUrl: string | null;
     createdAt: Date;
     updatedAt: Date;
     parent?: CategoryEntity | null;

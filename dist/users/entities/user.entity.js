@@ -9,7 +9,7 @@ var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.UserEntity = exports.UserRole = void 0;
+exports.UserEntity = exports.MembershipTier = exports.UserRole = void 0;
 const typeorm_1 = require("typeorm");
 const refresh_token_entity_1 = require("./refresh-token.entity");
 var UserRole;
@@ -18,6 +18,13 @@ var UserRole;
     UserRole["STAFF"] = "staff";
     UserRole["CUSTOMER"] = "customer";
 })(UserRole || (exports.UserRole = UserRole = {}));
+var MembershipTier;
+(function (MembershipTier) {
+    MembershipTier["NONE"] = "none";
+    MembershipTier["SILVER"] = "silver";
+    MembershipTier["GOLD"] = "gold";
+    MembershipTier["DIAMOND"] = "diamond";
+})(MembershipTier || (exports.MembershipTier = MembershipTier = {}));
 let UserEntity = class UserEntity {
     userId;
     username;
@@ -32,6 +39,8 @@ let UserEntity = class UserEntity {
     isActive;
     resetPasswordCode;
     resetPasswordExpiresAt;
+    membershipTier;
+    totalSpent;
     createdAt;
     updatedAt;
     refreshTokens;
@@ -108,6 +117,25 @@ __decorate([
     }),
     __metadata("design:type", Object)
 ], UserEntity.prototype, "resetPasswordExpiresAt", void 0);
+__decorate([
+    (0, typeorm_1.Column)({
+        name: 'membership_tier',
+        type: 'enum',
+        enum: MembershipTier,
+        default: MembershipTier.NONE,
+    }),
+    __metadata("design:type", String)
+], UserEntity.prototype, "membershipTier", void 0);
+__decorate([
+    (0, typeorm_1.Column)({
+        name: 'total_spent',
+        type: 'decimal',
+        precision: 15,
+        scale: 2,
+        default: '0.00',
+    }),
+    __metadata("design:type", String)
+], UserEntity.prototype, "totalSpent", void 0);
 __decorate([
     (0, typeorm_1.CreateDateColumn)({ name: 'created_at', type: 'datetime' }),
     __metadata("design:type", Date)

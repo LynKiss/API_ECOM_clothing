@@ -19,6 +19,7 @@ async function bootstrap() {
     app.use((0, cookie_parser_1.default)());
     app.useGlobalGuards(new jwt_auth_guard_1.JwtAuthGuard(reflector));
     app.useStaticAssets((0, node_path_1.join)(__dirname, '..', 'public'));
+    app.useStaticAssets((0, node_path_1.join)(process.cwd(), 'uploads'), { prefix: '/uploads' });
     app.setBaseViewsDir((0, node_path_1.join)(__dirname, '..', 'views'));
     app.setViewEngine('ejs');
     app.useGlobalPipes(new common_1.ValidationPipe({
