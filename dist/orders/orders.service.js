@@ -545,6 +545,106 @@ let OrdersService = OrdersService_1 = class OrdersService {
             }
         }
     }
+    async reconcileOrderPayment(currentUser, orderId) {
+        await this.ensureUserExists(currentUser._id);
+        const order = await this.findAccessibleOrder(currentUser, orderId);
+        if (order.paymentStatus === order_entity_1.PaymentStatus.PAID) {
+            return {
+                orderId: order.orderId,
+                paymentStatus: order.paymentStatus,
+                message: 'Payment already marked as paid',
+            };
+        }
+        if (order.paymentMethod !== order_entity_1.PaymentMethod.MOMO) {
+            return {
+                orderId: order.orderId,
+                paymentStatus: order.paymentStatus,
+                message: 'Automatic reconciliation is only available for MoMo',
+            };
+        }
+        const transaction = await this.paymentTransactionsRepository.findOne({
+            where: {
+                orderId: order.orderId,
+                provider: order_entity_1.PaymentMethod.MOMO,
+            },
+            order: { createdAt: 'DESC' },
+        });
+        if (!transaction) {
+            throw new common_1.NotFoundException('Payment transaction not found');
+        }
+        const queryResult = await this.queryMomoPayment(transaction.transactionRef);
+        const resultCode = Number(queryResult.resultCode);
+        const resultMessage = typeof queryResult.message === 'string'
+            ? queryResult.message
+            : 'MoMo reconciliation completed';
+        transaction.gatewayCode = String(queryResult.resultCode ?? '');
+        transaction.gatewayMessage = resultMessage;
+        transaction.rawPayload = {
+            ...(transaction.rawPayload ?? {}),
+            momoQuery: queryResult,
+        };
+        if (resultCode === 0) {
+            transaction.transactionStatus = payment_transaction_entity_1.PaymentTransactionStatus.SUCCESS;
+            transaction.paymentStatus = order_entity_1.PaymentStatus.PAID;
+            order.paymentStatus = order_entity_1.PaymentStatus.PAID;
+            await this.paymentTransactionsRepository.save(transaction);
+            await this.ordersRepository.save(order);
+            await this.notificationsService.sendPaymentNotification(order.userId, order.orderId, order_entity_1.PaymentStatus.PAID, order_entity_1.PaymentMethod.MOMO);
+            return {
+                orderId: order.orderId,
+                paymentStatus: order_entity_1.PaymentStatus.PAID,
+                transactionStatus: payment_transaction_entity_1.PaymentTransactionStatus.SUCCESS,
+                message: resultMessage,
+            };
+        }
+        await this.paymentTransactionsRepository.save(transaction);
+        return {
+            orderId: order.orderId,
+            paymentStatus: order.paymentStatus,
+            transactionStatus: transaction.transactionStatus,
+            gatewayCode: transaction.gatewayCode,
+            message: resultMessage,
+        };
+    }
+    async queryMomoPayment(transactionRef) {
+        const { partnerCode, accessKey, secretKey } = await this.settingsService.getMomoConfig();
+        if (!partnerCode || !accessKey || !secretKey) {
+            throw new common_1.BadRequestException('MoMo config is missing');
+        }
+        const orderId = transactionRef;
+        const requestId = transactionRef;
+        const rawSignature = [
+            `accessKey=${accessKey}`,
+            `orderId=${orderId}`,
+            `partnerCode=${partnerCode}`,
+            `requestId=${requestId}`,
+        ].join('&');
+        const signature = (0, node_crypto_2.createHmac)('sha256', secretKey)
+            .update(rawSignature)
+            .digest('hex');
+        const isSandbox = partnerCode === 'MOMO' || process.env.MOMO_SANDBOX === 'true';
+        const endpoint = isSandbox
+            ? 'https://test-payment.momo.vn/v2/gateway/api/query'
+            : 'https://payment.momo.vn/v2/gateway/api/query';
+        const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                partnerCode,
+                requestId,
+                orderId,
+                lang: 'vi',
+                signature,
+            }),
+        });
+        const data = (await response.json());
+        if (!response.ok) {
+            throw new common_1.BadRequestException(typeof data.message === 'string'
+                ? data.message
+                : 'MoMo reconciliation failed');
+        }
+        return data;
+    }
     async releaseReservedOnDelivered(orderId, productRepository, orderItemsRepository) {
         const items = await orderItemsRepository.find({ where: { orderId } });
         for (const item of items) {
@@ -1419,7 +1519,8 @@ let OrdersService = OrdersService_1 = class OrdersService {
                 throw new common_1.BadRequestException('Payment amount mismatch');
             }
         }
-        const success = resultCode === 0;
+        const resultCodeValue = Number(resultCode);
+        const success = resultCodeValue === 0;
         const paymentStatus = success ? order_entity_1.PaymentStatus.PAID : order_entity_1.PaymentStatus.FAILED;
         if (transaction) {
             transaction.transactionStatus = success

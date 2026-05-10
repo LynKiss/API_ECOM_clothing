@@ -87,6 +87,32 @@ export declare class OrdersService {
     private notifyAdminsAboutNewOrder;
     private isValidAdminStatusTransition;
     private restockOrderItems;
+    reconcileOrderPayment(currentUser: IUser, orderId: string): Promise<{
+        orderId: string;
+        paymentStatus: PaymentStatus.PAID;
+        message: string;
+        transactionStatus?: undefined;
+        gatewayCode?: undefined;
+    } | {
+        orderId: string;
+        paymentStatus: PaymentStatus.UNPAID | PaymentStatus.FAILED | PaymentStatus.REFUNDED;
+        message: string;
+        transactionStatus?: undefined;
+        gatewayCode?: undefined;
+    } | {
+        orderId: string;
+        paymentStatus: PaymentStatus;
+        transactionStatus: PaymentTransactionStatus;
+        message: string;
+        gatewayCode?: undefined;
+    } | {
+        orderId: string;
+        paymentStatus: PaymentStatus.UNPAID | PaymentStatus.FAILED | PaymentStatus.REFUNDED;
+        transactionStatus: PaymentTransactionStatus;
+        gatewayCode: string;
+        message: string;
+    }>;
+    private queryMomoPayment;
     private releaseReservedOnDelivered;
     private revertDiscountUsage;
     createGuestOrder(dto: import('./dto/create-guest-order.dto').CreateGuestOrderDto, idempotencyKey?: string): Promise<{

@@ -690,6 +690,132 @@ export class OrdersService {
     }
   }
 
+  async reconcileOrderPayment(currentUser: IUser, orderId: string) {
+    await this.ensureUserExists(currentUser._id);
+    const order = await this.findAccessibleOrder(currentUser, orderId);
+
+    if (order.paymentStatus === PaymentStatus.PAID) {
+      return {
+        orderId: order.orderId,
+        paymentStatus: order.paymentStatus,
+        message: 'Payment already marked as paid',
+      };
+    }
+
+    if (order.paymentMethod !== PaymentMethod.MOMO) {
+      return {
+        orderId: order.orderId,
+        paymentStatus: order.paymentStatus,
+        message: 'Automatic reconciliation is only available for MoMo',
+      };
+    }
+
+    const transaction = await this.paymentTransactionsRepository.findOne({
+      where: {
+        orderId: order.orderId,
+        provider: PaymentMethod.MOMO,
+      },
+      order: { createdAt: 'DESC' },
+    });
+
+    if (!transaction) {
+      throw new NotFoundException('Payment transaction not found');
+    }
+
+    const queryResult = await this.queryMomoPayment(transaction.transactionRef);
+    const resultCode = Number(queryResult.resultCode);
+    const resultMessage =
+      typeof queryResult.message === 'string'
+        ? queryResult.message
+        : 'MoMo reconciliation completed';
+
+    transaction.gatewayCode = String(queryResult.resultCode ?? '');
+    transaction.gatewayMessage = resultMessage;
+    transaction.rawPayload = {
+      ...(transaction.rawPayload ?? {}),
+      momoQuery: queryResult,
+    };
+
+    if (resultCode === 0) {
+      transaction.transactionStatus = PaymentTransactionStatus.SUCCESS;
+      transaction.paymentStatus = PaymentStatus.PAID;
+      order.paymentStatus = PaymentStatus.PAID;
+      await this.paymentTransactionsRepository.save(transaction);
+      await this.ordersRepository.save(order);
+      await this.notificationsService.sendPaymentNotification(
+        order.userId,
+        order.orderId,
+        PaymentStatus.PAID,
+        PaymentMethod.MOMO,
+      );
+
+      return {
+        orderId: order.orderId,
+        paymentStatus: PaymentStatus.PAID,
+        transactionStatus: PaymentTransactionStatus.SUCCESS,
+        message: resultMessage,
+      };
+    }
+
+    await this.paymentTransactionsRepository.save(transaction);
+    return {
+      orderId: order.orderId,
+      paymentStatus: order.paymentStatus,
+      transactionStatus: transaction.transactionStatus,
+      gatewayCode: transaction.gatewayCode,
+      message: resultMessage,
+    };
+  }
+
+  private async queryMomoPayment(transactionRef: string) {
+    const { partnerCode, accessKey, secretKey } =
+      await this.settingsService.getMomoConfig();
+
+    if (!partnerCode || !accessKey || !secretKey) {
+      throw new BadRequestException('MoMo config is missing');
+    }
+
+    const orderId = transactionRef;
+    const requestId = transactionRef;
+    const rawSignature = [
+      `accessKey=${accessKey}`,
+      `orderId=${orderId}`,
+      `partnerCode=${partnerCode}`,
+      `requestId=${requestId}`,
+    ].join('&');
+    const signature = createHmac('sha256', secretKey)
+      .update(rawSignature)
+      .digest('hex');
+
+    const isSandbox =
+      partnerCode === 'MOMO' || process.env.MOMO_SANDBOX === 'true';
+    const endpoint = isSandbox
+      ? 'https://test-payment.momo.vn/v2/gateway/api/query'
+      : 'https://payment.momo.vn/v2/gateway/api/query';
+
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        partnerCode,
+        requestId,
+        orderId,
+        lang: 'vi',
+        signature,
+      }),
+    });
+
+    const data = (await response.json()) as Record<string, unknown>;
+    if (!response.ok) {
+      throw new BadRequestException(
+        typeof data.message === 'string'
+          ? data.message
+          : 'MoMo reconciliation failed',
+      );
+    }
+    return data;
+  }
+
   /**
    * Khi đơn DELIVERED — không restock, chỉ giải phóng quantityReserved
    * (hàng đã thực sự rời kho, không trả về stock).
@@ -1888,7 +2014,7 @@ export class OrdersService {
       orderId?: string;
       requestId?: string;
       amount?: number;
-      resultCode?: number;
+      resultCode?: number | string;
       transId?: string;
       message?: string;
     };
@@ -1939,7 +2065,8 @@ export class OrdersService {
       }
     }
 
-    const success = resultCode === 0;
+    const resultCodeValue = Number(resultCode);
+    const success = resultCodeValue === 0;
     const paymentStatus = success ? PaymentStatus.PAID : PaymentStatus.FAILED;
 
     // Update existing transaction status if found, or create a new one

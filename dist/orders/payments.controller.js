@@ -32,6 +32,9 @@ let PaymentsController = class PaymentsController {
     getPaymentTransactions(currentUser, orderId) {
         return this.ordersService.findPaymentTransactions(currentUser, orderId);
     }
+    reconcileOrderPayment(currentUser, orderId) {
+        return this.ordersService.reconcileOrderPayment(currentUser, orderId);
+    }
     handleMomoIpn(body) {
         return this.ordersService.handleMomoIpn(body);
     }
@@ -77,6 +80,15 @@ __decorate([
     __metadata("design:paramtypes", [Object, String]),
     __metadata("design:returntype", void 0)
 ], PaymentsController.prototype, "getPaymentTransactions", null);
+__decorate([
+    (0, common_1.Post)('orders/:orderId/reconcile'),
+    (0, customize_1.ResponseMessage)('Reconcile order payment'),
+    __param(0, (0, customize_1.User)()),
+    __param(1, (0, common_1.Param)('orderId')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String]),
+    __metadata("design:returntype", void 0)
+], PaymentsController.prototype, "reconcileOrderPayment", null);
 __decorate([
     (0, customize_1.Public)(),
     (0, common_1.Post)('momo/ipn'),

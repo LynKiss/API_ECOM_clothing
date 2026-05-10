@@ -39,6 +39,31 @@ export declare class PaymentsController {
         createdAt: Date;
         updatedAt: Date;
     }[]>;
+    reconcileOrderPayment(currentUser: IUser, orderId: string): Promise<{
+        orderId: string;
+        paymentStatus: import("./entities/order.entity").PaymentStatus.PAID;
+        message: string;
+        transactionStatus?: undefined;
+        gatewayCode?: undefined;
+    } | {
+        orderId: string;
+        paymentStatus: import("./entities/order.entity").PaymentStatus.UNPAID | import("./entities/order.entity").PaymentStatus.FAILED | import("./entities/order.entity").PaymentStatus.REFUNDED;
+        message: string;
+        transactionStatus?: undefined;
+        gatewayCode?: undefined;
+    } | {
+        orderId: string;
+        paymentStatus: import("./entities/order.entity").PaymentStatus;
+        transactionStatus: import("./entities/payment-transaction.entity").PaymentTransactionStatus;
+        message: string;
+        gatewayCode?: undefined;
+    } | {
+        orderId: string;
+        paymentStatus: import("./entities/order.entity").PaymentStatus.UNPAID | import("./entities/order.entity").PaymentStatus.FAILED | import("./entities/order.entity").PaymentStatus.REFUNDED;
+        transactionStatus: import("./entities/payment-transaction.entity").PaymentTransactionStatus;
+        gatewayCode: string;
+        message: string;
+    }>;
     handleMomoIpn(body: Record<string, unknown>): Promise<{
         message: string;
         transId?: undefined;

@@ -45,6 +45,15 @@ export class PaymentsController {
     return this.ordersService.findPaymentTransactions(currentUser, orderId);
   }
 
+  @Post('orders/:orderId/reconcile')
+  @ResponseMessage('Reconcile order payment')
+  reconcileOrderPayment(
+    @User() currentUser: IUser,
+    @Param('orderId') orderId: string,
+  ) {
+    return this.ordersService.reconcileOrderPayment(currentUser, orderId);
+  }
+
   @Public()
   @Post('momo/ipn')
   @ResponseMessage('MoMo IPN received')
