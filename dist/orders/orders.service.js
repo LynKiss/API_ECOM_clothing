@@ -152,6 +152,24 @@ let OrdersService = OrdersService_1 = class OrdersService {
     hasManageOrdersPermission(currentUser) {
         return currentUser.permissions.some((permission) => permission.key === 'manage_orders');
     }
+    async createGuestUserRecord(entityManager, userId, orderId) {
+        const compactOrderId = orderId.replace(/-/g, '');
+        await entityManager.query(`INSERT INTO users
+        (user_id, username, email, role, password_hash, provider, provider_id, is_active)
+       VALUES (?, ?, ?, 'customer', NULL, 'guest', ?, 1)`, [
+            userId,
+            `guest_${compactOrderId.slice(0, 24)}`,
+            `guest_${compactOrderId}@guest.local`,
+            orderId,
+        ]);
+    }
+    async isGuestUserId(userId) {
+        if (userId.startsWith('guest-')) {
+            return true;
+        }
+        const rows = (await this.ordersRepository.manager.query('SELECT provider FROM users WHERE user_id = ? LIMIT 1', [userId]));
+        return rows[0]?.provider === 'guest';
+    }
     async findAccessibleOrder(currentUser, orderId) {
         return this.hasManageOrdersPermission(currentUser)
             ? this.findAnyOrder(orderId)
@@ -721,7 +739,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
         const deliveryCost = this.calculateDeliveryCost(deliveryMethod, subtotalAmount);
         const totalPayment = subtotalAmount + deliveryCost;
         const orderId = (0, node_crypto_1.randomUUID)();
-        const guestUserId = `guest-${(0, node_crypto_1.randomUUID)()}`.slice(0, 36);
+        const guestUserId = (0, node_crypto_1.randomUUID)();
         const addressSnapshot = [
             dto.shipping.addressLine,
             dto.shipping.ward,
@@ -742,6 +760,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
                 if (dup)
                     return;
             }
+            await this.createGuestUserRecord(entityManager, guestUserId, orderId);
             const order = trxOrders.create({
                 orderId,
                 userId: guestUserId,
@@ -854,7 +873,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
         });
         if (!order)
             throw new common_1.NotFoundException('Không tìm thấy đơn hàng');
-        if (!order.userId.startsWith('guest-')) {
+        if (!(await this.isGuestUserId(order.userId))) {
             throw new common_1.UnauthorizedException('Đơn này thuộc tài khoản đăng ký, hãy đăng nhập để xem');
         }
         if (order.phone.replace(/\s+/g, '') !== phone.replace(/\s+/g, '')) {
@@ -1402,14 +1421,30 @@ let OrdersService = OrdersService_1 = class OrdersService {
         }
         const updatedOrder = await this.findAnyOrder(orderId);
         await this.notificationsService.sendOrderStatusNotification(updatedOrder.userId, orderId, nextStatus);
-        if (nextStatus === order_entity_1.OrderStatus.DELIVERED && updatedOrder.userId) {
+        if (nextStatus === order_entity_1.OrderStatus.DELIVERED &&
+            updatedOrder.userId &&
+            !(await this.isGuestUserId(updatedOrder.userId))) {
             void this.membershipService.recalculateAndReward(updatedOrder.userId);
         }
         return this.buildOrderDetail(updatedOrder);
     }
     async initiatePayment(currentUser, orderId, initiatePaymentDto) {
-        await this.ensureUserExists(currentUser._id);
-        const order = await this.findOrderDetail(currentUser, orderId);
+        const order = currentUser
+            ? await this.findAccessibleOrder(currentUser, orderId)
+            : await this.findAnyOrder(orderId);
+        if (currentUser) {
+            await this.ensureUserExists(currentUser._id);
+        }
+        else {
+            const normalizePhone = (value) => value.replace(/\s+/g, '');
+            if (!(await this.isGuestUserId(order.userId))) {
+                throw new common_1.UnauthorizedException('Order is not a guest order');
+            }
+            if (!initiatePaymentDto.phone ||
+                normalizePhone(order.phone) !== normalizePhone(initiatePaymentDto.phone)) {
+                throw new common_1.UnauthorizedException('Phone number does not match order');
+            }
+        }
         if (!this.isOnlinePaymentMethod(order.paymentMethod)) {
             throw new common_1.BadRequestException('Order does not require online payment');
         }
@@ -1419,7 +1454,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
         const transactionRef = `${orderId}-${Date.now()}`;
         const paymentTransaction = this.paymentTransactionsRepository.create({
             orderId,
-            userId: currentUser._id,
+            userId: order.userId,
             provider: order.paymentMethod,
             transactionRef,
             transactionStatus: payment_transaction_entity_1.PaymentTransactionStatus.PENDING,

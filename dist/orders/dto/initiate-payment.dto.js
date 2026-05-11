@@ -13,6 +13,7 @@ exports.InitiatePaymentDto = void 0;
 const class_validator_1 = require("class-validator");
 class InitiatePaymentDto {
     returnUrl;
+    phone;
 }
 exports.InitiatePaymentDto = InitiatePaymentDto;
 __decorate([
@@ -21,4 +22,10 @@ __decorate([
     (0, class_validator_1.MaxLength)(500),
     __metadata("design:type", String)
 ], InitiatePaymentDto.prototype, "returnUrl", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(30),
+    __metadata("design:type", String)
+], InitiatePaymentDto.prototype, "phone", void 0);
 //# sourceMappingURL=initiate-payment.dto.js.map

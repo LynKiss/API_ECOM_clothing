@@ -26,6 +26,9 @@ let PaymentsController = class PaymentsController {
     initiatePayment(currentUser, orderId, initiatePaymentDto) {
         return this.ordersService.initiatePayment(currentUser, orderId, initiatePaymentDto);
     }
+    initiateGuestPayment(orderId, initiatePaymentDto) {
+        return this.ordersService.initiatePayment(undefined, orderId, initiatePaymentDto);
+    }
     handlePaymentCallback(provider, paymentCallbackDto) {
         return this.ordersService.handlePaymentCallback(provider, paymentCallbackDto);
     }
@@ -61,6 +64,16 @@ __decorate([
     __metadata("design:paramtypes", [Object, String, initiate_payment_dto_1.InitiatePaymentDto]),
     __metadata("design:returntype", void 0)
 ], PaymentsController.prototype, "initiatePayment", null);
+__decorate([
+    (0, customize_1.Public)(),
+    (0, common_1.Post)('guest/orders/:orderId/initiate'),
+    (0, customize_1.ResponseMessage)('Initiate guest payment'),
+    __param(0, (0, common_1.Param)('orderId')),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, initiate_payment_dto_1.InitiatePaymentDto]),
+    __metadata("design:returntype", void 0)
+], PaymentsController.prototype, "initiateGuestPayment", null);
 __decorate([
     (0, customize_1.Public)(),
     (0, common_1.Post)('callback/:provider'),

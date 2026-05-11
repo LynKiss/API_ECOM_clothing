@@ -12,6 +12,13 @@ export declare class PaymentsController {
         paymentUrl: string;
         expiresAt: Date;
     }>;
+    initiateGuestPayment(orderId: string, initiatePaymentDto: InitiatePaymentDto): Promise<{
+        orderId: string;
+        provider: import("./entities/order.entity").PaymentMethod;
+        transactionRef: string;
+        paymentUrl: string;
+        expiresAt: Date;
+    }>;
     handlePaymentCallback(provider: string, paymentCallbackDto: PaymentCallbackDto): Promise<{
         orderId: string;
         provider: import("./entities/order.entity").PaymentMethod;

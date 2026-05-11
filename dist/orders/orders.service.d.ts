@@ -70,6 +70,8 @@ export declare class OrdersService {
     private findOwnedOrder;
     private findAnyOrder;
     private hasManageOrdersPermission;
+    private createGuestUserRecord;
+    private isGuestUserId;
     private findAccessibleOrder;
     private findOrCreateOrderTracking;
     private toNullableNumber;
@@ -521,7 +523,7 @@ export declare class OrdersService {
             createdAt: Date;
         }[];
     }>;
-    initiatePayment(currentUser: IUser, orderId: string, initiatePaymentDto: InitiatePaymentDto): Promise<{
+    initiatePayment(currentUser: IUser | undefined, orderId: string, initiatePaymentDto: InitiatePaymentDto): Promise<{
         orderId: string;
         provider: PaymentMethod;
         transactionRef: string;
