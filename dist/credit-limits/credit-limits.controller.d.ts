@@ -1,3 +1,4 @@
+import type { IUser } from '../users/users.interface';
 import { CreditLimitsService } from './credit-limits.service';
 import { RecordPaymentDto, UpsertCreditLimitDto } from './dto/upsert-credit-limit.dto';
 export declare class CreditLimitsController {
@@ -7,6 +8,7 @@ export declare class CreditLimitsController {
         items: {
             username: string | null;
             email: string | null;
+            fullName: string | null;
             availableCredit: number;
             limitId: string;
             userId: string;
@@ -25,9 +27,16 @@ export declare class CreditLimitsController {
             totalPages: number;
         };
     }>;
+    getMyLimit(currentUser: IUser): Promise<{
+        creditLimit: number;
+        currentDebt: number;
+        availableCredit: number;
+        isActive: boolean;
+    } | null>;
     findByUser(userId: string): Promise<{
         username: string | null;
         email: string | null;
+        fullName: string | null;
         availableCredit: number;
         limitId: string;
         userId: string;
@@ -42,6 +51,7 @@ export declare class CreditLimitsController {
     upsert(dto: UpsertCreditLimitDto): Promise<{
         username: string | null;
         email: string | null;
+        fullName: string | null;
         availableCredit: number;
         limitId: string;
         userId: string;
@@ -56,6 +66,7 @@ export declare class CreditLimitsController {
     syncDebt(userId: string): Promise<{
         username: string | null;
         email: string | null;
+        fullName: string | null;
         availableCredit: number;
         limitId: string;
         userId: string;
@@ -70,6 +81,7 @@ export declare class CreditLimitsController {
     recordPayment(dto: RecordPaymentDto): Promise<{
         username: string | null;
         email: string | null;
+        fullName: string | null;
         availableCredit: number;
         limitId: string;
         userId: string;
@@ -84,4 +96,5 @@ export declare class CreditLimitsController {
     remove(userId: string): Promise<{
         message: string;
     }>;
+    getCustomers(search?: string): Promise<import("../users/entities/user.entity").UserEntity[]>;
 }

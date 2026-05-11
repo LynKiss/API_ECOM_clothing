@@ -37,6 +37,7 @@ let UserEntity = class UserEntity {
     provider;
     providerId;
     isActive;
+    isWholesale;
     resetPasswordCode;
     resetPasswordExpiresAt;
     membershipTier;
@@ -100,6 +101,10 @@ __decorate([
     (0, typeorm_1.Column)({ name: 'is_active', type: 'tinyint', width: 1, default: () => '1' }),
     __metadata("design:type", Boolean)
 ], UserEntity.prototype, "isActive", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ name: 'is_wholesale', type: 'tinyint', width: 1, default: () => '0' }),
+    __metadata("design:type", Boolean)
+], UserEntity.prototype, "isWholesale", void 0);
 __decorate([
     (0, typeorm_1.Column)({
         name: 'reset_password_code',

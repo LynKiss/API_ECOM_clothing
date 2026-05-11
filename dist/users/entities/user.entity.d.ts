@@ -22,6 +22,7 @@ export declare class UserEntity {
     provider: string | null;
     providerId: string | null;
     isActive: boolean;
+    isWholesale: boolean;
     resetPasswordCode: string | null;
     resetPasswordExpiresAt: Date | null;
     membershipTier: MembershipTier;

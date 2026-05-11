@@ -25,6 +25,9 @@ let CreditLimitsController = class CreditLimitsController {
     findAll(page = 1, limit = 20) {
         return this.svc.findAll(+page, +limit);
     }
+    getMyLimit(currentUser) {
+        return this.svc.getMyLimit(currentUser._id);
+    }
     findByUser(userId) {
         return this.svc.findByUser(userId);
     }
@@ -40,6 +43,9 @@ let CreditLimitsController = class CreditLimitsController {
     remove(userId) {
         return this.svc.remove(userId);
     }
+    getCustomers(search) {
+        return this.svc.getCustomers(search);
+    }
 };
 exports.CreditLimitsController = CreditLimitsController;
 __decorate([
@@ -51,6 +57,14 @@ __decorate([
     __metadata("design:paramtypes", [Object, Object]),
     __metadata("design:returntype", void 0)
 ], CreditLimitsController.prototype, "findAll", null);
+__decorate([
+    (0, common_1.Get)('my-limit'),
+    (0, customize_1.ResponseMessage)('Get my credit limit'),
+    __param(0, (0, customize_1.User)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", void 0)
+], CreditLimitsController.prototype, "getMyLimit", null);
 __decorate([
     (0, common_1.Get)('user/:userId'),
     (0, customize_1.ResponseMessage)('Get credit limit by user'),
@@ -91,6 +105,14 @@ __decorate([
     __metadata("design:paramtypes", [String]),
     __metadata("design:returntype", void 0)
 ], CreditLimitsController.prototype, "remove", null);
+__decorate([
+    (0, common_1.Get)('customers'),
+    (0, customize_1.ResponseMessage)('Get customer list for credit limit assignment'),
+    __param(0, (0, common_1.Query)('search')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", void 0)
+], CreditLimitsController.prototype, "getCustomers", null);
 exports.CreditLimitsController = CreditLimitsController = __decorate([
     (0, common_1.Controller)('credit-limits'),
     __metadata("design:paramtypes", [credit_limits_service_1.CreditLimitsService])

@@ -12,6 +12,7 @@ export declare class CreditLimitsService {
         items: {
             username: string | null;
             email: string | null;
+            fullName: string | null;
             availableCredit: number;
             limitId: string;
             userId: string;
@@ -33,6 +34,7 @@ export declare class CreditLimitsService {
     findByUser(userId: string): Promise<{
         username: string | null;
         email: string | null;
+        fullName: string | null;
         availableCredit: number;
         limitId: string;
         userId: string;
@@ -47,6 +49,7 @@ export declare class CreditLimitsService {
     upsert(dto: UpsertCreditLimitDto): Promise<{
         username: string | null;
         email: string | null;
+        fullName: string | null;
         availableCredit: number;
         limitId: string;
         userId: string;
@@ -61,6 +64,7 @@ export declare class CreditLimitsService {
     syncDebt(userId: string): Promise<{
         username: string | null;
         email: string | null;
+        fullName: string | null;
         availableCredit: number;
         limitId: string;
         userId: string;
@@ -72,9 +76,16 @@ export declare class CreditLimitsService {
         createdAt: Date;
         updatedAt: Date;
     } | null>;
+    getMyLimit(userId: string): Promise<{
+        creditLimit: number;
+        currentDebt: number;
+        availableCredit: number;
+        isActive: boolean;
+    } | null>;
     recordPayment(dto: RecordPaymentDto): Promise<{
         username: string | null;
         email: string | null;
+        fullName: string | null;
         availableCredit: number;
         limitId: string;
         userId: string;
@@ -93,4 +104,5 @@ export declare class CreditLimitsService {
     remove(userId: string): Promise<{
         message: string;
     }>;
+    getCustomers(search?: string): Promise<UserEntity[]>;
 }

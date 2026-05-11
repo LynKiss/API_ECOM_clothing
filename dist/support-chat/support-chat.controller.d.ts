@@ -25,7 +25,7 @@ export declare class SupportChatController {
             quantityAvailable: number;
             primaryImageUrl: string | null;
         }[];
-        intent: "returns" | "greeting" | "shipping" | "payment" | "product_search" | "product_recommendation" | "cart_add" | "cart_view" | "checkout" | "identity" | "my_orders" | "order_lookup" | "human_handoff" | "general";
+        intent: "identity" | "shipping" | "returns" | "greeting" | "payment" | "product_search" | "product_recommendation" | "cart_add" | "cart_view" | "checkout" | "my_orders" | "order_lookup" | "human_handoff" | "general";
         cartChanged: boolean;
     } | {
         reply: string;
@@ -40,7 +40,7 @@ export declare class SupportChatController {
             quantityAvailable: number;
             primaryImageUrl: string | null;
         }[];
-        intent: "returns" | "greeting" | "shipping" | "payment" | "product_search" | "product_recommendation" | "cart_add" | "my_orders" | "order_lookup" | "general";
+        intent: "shipping" | "returns" | "greeting" | "payment" | "product_search" | "product_recommendation" | "cart_add" | "my_orders" | "order_lookup" | "general";
         cartChanged: boolean;
     }>;
     createMyBotReply(currentUser: IUser, createSupportBotReplyDto: CreateSupportBotReplyDto): Promise<{
@@ -56,7 +56,7 @@ export declare class SupportChatController {
             quantityAvailable: number;
             primaryImageUrl: string | null;
         }[];
-        intent: "returns" | "greeting" | "shipping" | "payment" | "product_search" | "product_recommendation" | "cart_add" | "cart_view" | "checkout" | "identity" | "my_orders" | "order_lookup" | "human_handoff" | "general";
+        intent: "identity" | "shipping" | "returns" | "greeting" | "payment" | "product_search" | "product_recommendation" | "cart_add" | "cart_view" | "checkout" | "my_orders" | "order_lookup" | "human_handoff" | "general";
         cartChanged: boolean;
     } | {
         reply: string;
@@ -71,7 +71,7 @@ export declare class SupportChatController {
             quantityAvailable: number;
             primaryImageUrl: string | null;
         }[];
-        intent: "returns" | "greeting" | "shipping" | "payment" | "product_search" | "product_recommendation" | "cart_add" | "my_orders" | "order_lookup" | "general";
+        intent: "shipping" | "returns" | "greeting" | "payment" | "product_search" | "product_recommendation" | "cart_add" | "my_orders" | "order_lookup" | "general";
         cartChanged: boolean;
     }>;
     startMyConversation(currentUser: IUser): Promise<{

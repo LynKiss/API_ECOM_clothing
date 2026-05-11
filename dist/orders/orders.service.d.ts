@@ -34,6 +34,7 @@ import { PaymentTransactionEntity, PaymentTransactionStatus } from './entities/p
 import { ReturnEntity, ReturnInspectionStatus, ReturnStatus } from './entities/return.entity';
 import { ShippingAddressEntity } from './entities/shipping-address.entity';
 import { MembershipService } from '../membership/membership.service';
+import { CustomerCreditLimitEntity } from '../credit-limits/entities/customer-credit-limit.entity';
 export declare class OrdersService {
     private readonly deliveryMethodsRepository;
     private readonly shippingAddressesRepository;
@@ -55,6 +56,7 @@ export declare class OrdersService {
     private readonly couponUsageRepository;
     private readonly returnsRepository;
     private readonly paymentTransactionsRepository;
+    private readonly creditLimitRepository;
     private readonly notificationsService;
     private readonly ordersAdminPublisher;
     private readonly settingsService;
@@ -62,7 +64,7 @@ export declare class OrdersService {
     private readonly logger;
     private readonly liveTrackingFreshnessMs;
     private readonly stalePaymentTtlMs;
-    constructor(deliveryMethodsRepository: Repository<DeliveryMethodEntity>, shippingAddressesRepository: Repository<ShippingAddressEntity>, ordersRepository: Repository<OrderEntity>, orderTrackingRepository: Repository<OrderTrackingEntity>, orderItemsRepository: Repository<OrderItemEntity>, orderStatusHistoryRepository: Repository<OrderStatusHistoryEntity>, cartsRepository: Repository<ShoppingCartEntity>, cartItemsRepository: Repository<CartItemEntity>, productsRepository: Repository<ProductEntity>, productVariantsRepository: Repository<ProductVariantEntity>, colorsRepository: Repository<ColorEntity>, sizesRepository: Repository<SizeEntity>, inventoryTransactionsRepository: Repository<InventoryTransactionEntity>, usersRepository: Repository<UserEntity>, discountsRepository: Repository<DiscountEntity>, discountCategoriesRepository: Repository<DiscountCategoryEntity>, discountProductsRepository: Repository<DiscountProductEntity>, couponUsageRepository: Repository<CouponUsageEntity>, returnsRepository: Repository<ReturnEntity>, paymentTransactionsRepository: Repository<PaymentTransactionEntity>, notificationsService: NotificationsService, ordersAdminPublisher: OrdersAdminPublisher, settingsService: SettingsService, membershipService: MembershipService);
+    constructor(deliveryMethodsRepository: Repository<DeliveryMethodEntity>, shippingAddressesRepository: Repository<ShippingAddressEntity>, ordersRepository: Repository<OrderEntity>, orderTrackingRepository: Repository<OrderTrackingEntity>, orderItemsRepository: Repository<OrderItemEntity>, orderStatusHistoryRepository: Repository<OrderStatusHistoryEntity>, cartsRepository: Repository<ShoppingCartEntity>, cartItemsRepository: Repository<CartItemEntity>, productsRepository: Repository<ProductEntity>, productVariantsRepository: Repository<ProductVariantEntity>, colorsRepository: Repository<ColorEntity>, sizesRepository: Repository<SizeEntity>, inventoryTransactionsRepository: Repository<InventoryTransactionEntity>, usersRepository: Repository<UserEntity>, discountsRepository: Repository<DiscountEntity>, discountCategoriesRepository: Repository<DiscountCategoryEntity>, discountProductsRepository: Repository<DiscountProductEntity>, couponUsageRepository: Repository<CouponUsageEntity>, returnsRepository: Repository<ReturnEntity>, paymentTransactionsRepository: Repository<PaymentTransactionEntity>, creditLimitRepository: Repository<CustomerCreditLimitEntity>, notificationsService: NotificationsService, ordersAdminPublisher: OrdersAdminPublisher, settingsService: SettingsService, membershipService: MembershipService);
     private syncDefaultWarehouseStock;
     private ensureUserExists;
     private findOwnedOrder;
@@ -297,7 +299,7 @@ export declare class OrdersService {
         orderId: string;
         mode: OrderTrackingMode;
         gpsSignalFresh: boolean;
-        activeSource: "manual" | "gps" | "none";
+        activeSource: "none" | "manual" | "gps";
         activeLocation: {
             latitude: number;
             longitude: number;
@@ -334,7 +336,7 @@ export declare class OrdersService {
         orderId: string;
         mode: OrderTrackingMode;
         gpsSignalFresh: boolean;
-        activeSource: "manual" | "gps" | "none";
+        activeSource: "none" | "manual" | "gps";
         activeLocation: {
             latitude: number;
             longitude: number;
@@ -371,7 +373,7 @@ export declare class OrdersService {
         orderId: string;
         mode: OrderTrackingMode;
         gpsSignalFresh: boolean;
-        activeSource: "manual" | "gps" | "none";
+        activeSource: "none" | "manual" | "gps";
         activeLocation: {
             latitude: number;
             longitude: number;
@@ -408,7 +410,7 @@ export declare class OrdersService {
         orderId: string;
         mode: OrderTrackingMode;
         gpsSignalFresh: boolean;
-        activeSource: "manual" | "gps" | "none";
+        activeSource: "none" | "manual" | "gps";
         activeLocation: {
             latitude: number;
             longitude: number;

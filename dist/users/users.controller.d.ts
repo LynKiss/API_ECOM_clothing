@@ -27,6 +27,7 @@ export declare class UsersController {
         };
         items: {
             isActive: boolean;
+            isWholesale: boolean;
             createdAt: Date;
             _id: string;
             username: string;
@@ -53,6 +54,7 @@ export declare class UsersController {
     }>;
     getCustomerDetail(id: string): Promise<{
         isActive: boolean;
+        isWholesale: boolean;
         createdAt: Date;
         updatedAt: Date;
         statistics: {
@@ -70,6 +72,7 @@ export declare class UsersController {
     }>;
     updateCustomer(currentUser: IUser, id: string, updateAdminUserDto: UpdateAdminUserDto): Promise<{
         isActive: boolean;
+        isWholesale: boolean;
         createdAt: Date;
         updatedAt: Date;
         _id: string;
@@ -120,7 +123,17 @@ export declare class UsersController {
         _id: string;
         deleted: boolean;
     }>;
-    getMyProfile(currentUser: IUser): Promise<IUser>;
+    getMyProfile(currentUser: IUser): Promise<{
+        isWholesale: boolean;
+        _id: string;
+        username: string;
+        email: string;
+        fullName?: string | null;
+        phoneNumber?: string | null;
+        avatarUrl?: string | null;
+        role: import("./users.interface").IUserRoleSummary;
+        permissions: import("./users.interface").IUserPermission[];
+    }>;
     updateMyProfile(currentUser: IUser, updateUserDto: UpdateUserDto): Promise<IUser>;
     uploadMyAvatar(currentUser: IUser, file: UploadedImageFile): Promise<IUser>;
     changeMyPassword(currentUser: IUser, changePasswordDto: ChangePasswordDto): Promise<{

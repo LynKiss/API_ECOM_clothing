@@ -21,6 +21,7 @@ class UpdateAdminUserDto {
     avatarUrl;
     role;
     isActive;
+    isWholesale;
 }
 exports.UpdateAdminUserDto = UpdateAdminUserDto;
 __decorate([
@@ -71,4 +72,9 @@ __decorate([
     (0, class_validator_1.IsBoolean)(),
     __metadata("design:type", Boolean)
 ], UpdateAdminUserDto.prototype, "isActive", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], UpdateAdminUserDto.prototype, "isWholesale", void 0);
 //# sourceMappingURL=update-admin-user.dto.js.map

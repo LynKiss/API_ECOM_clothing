@@ -43,6 +43,7 @@ const orders_admin_gateway_1 = require("./orders-admin.gateway");
 const orders_admin_publisher_1 = require("./orders-admin.publisher");
 const orders_service_1 = require("./orders.service");
 const membership_module_1 = require("../membership/membership.module");
+const customer_credit_limit_entity_1 = require("../credit-limits/entities/customer-credit-limit.entity");
 let OrdersModule = class OrdersModule {
 };
 exports.OrdersModule = OrdersModule;
@@ -77,6 +78,7 @@ exports.OrdersModule = OrdersModule = __decorate([
                 discount_product_entity_1.DiscountProductEntity,
                 coupon_usage_entity_1.CouponUsageEntity,
                 payment_transaction_entity_1.PaymentTransactionEntity,
+                customer_credit_limit_entity_1.CustomerCreditLimitEntity,
             ]),
         ],
         controllers: [orders_controller_1.OrdersController, payments_controller_1.PaymentsController, returns_controller_1.ReturnsController, delivery_methods_controller_1.DeliveryMethodsController],

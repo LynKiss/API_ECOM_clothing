@@ -15,7 +15,8 @@ export declare enum PaymentMethod {
     MOMO = "momo",
     VNPAY = "vnpay",
     ZALOPAY = "zalopay",
-    PAYPAL = "paypal"
+    PAYPAL = "paypal",
+    CREDIT = "credit"
 }
 export declare enum PaymentStatus {
     UNPAID = "unpaid",

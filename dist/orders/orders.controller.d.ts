@@ -194,7 +194,7 @@ export declare class OrdersController {
         orderId: string;
         mode: import("./entities/order-tracking.entity").OrderTrackingMode;
         gpsSignalFresh: boolean;
-        activeSource: "manual" | "gps" | "none";
+        activeSource: "none" | "manual" | "gps";
         activeLocation: {
             latitude: number;
             longitude: number;
@@ -426,7 +426,7 @@ export declare class OrdersController {
         orderId: string;
         mode: import("./entities/order-tracking.entity").OrderTrackingMode;
         gpsSignalFresh: boolean;
-        activeSource: "manual" | "gps" | "none";
+        activeSource: "none" | "manual" | "gps";
         activeLocation: {
             latitude: number;
             longitude: number;
@@ -463,7 +463,7 @@ export declare class OrdersController {
         orderId: string;
         mode: import("./entities/order-tracking.entity").OrderTrackingMode;
         gpsSignalFresh: boolean;
-        activeSource: "manual" | "gps" | "none";
+        activeSource: "none" | "manual" | "gps";
         activeLocation: {
             latitude: number;
             longitude: number;
@@ -500,7 +500,7 @@ export declare class OrdersController {
         orderId: string;
         mode: import("./entities/order-tracking.entity").OrderTrackingMode;
         gpsSignalFresh: boolean;
-        activeSource: "manual" | "gps" | "none";
+        activeSource: "none" | "manual" | "gps";
         activeLocation: {
             latitude: number;
             longitude: number;

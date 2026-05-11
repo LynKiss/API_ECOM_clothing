@@ -130,6 +130,7 @@ let UsersService = class UsersService {
             items: users.map((user) => ({
                 ...this.toPublicUser(user),
                 isActive: user.isActive,
+                isWholesale: user.isWholesale,
                 createdAt: user.createdAt,
             })),
         };
@@ -139,7 +140,7 @@ let UsersService = class UsersService {
         if (!user) {
             throw new common_1.UnauthorizedException('Nguoi dung khong ton tai');
         }
-        return this.toPublicUser(user);
+        return { ...this.toPublicUser(user), isWholesale: user.isWholesale };
     }
     async register(registerUserDto) {
         const existedUser = await this.usersRepository.findOne({
@@ -526,6 +527,7 @@ let UsersService = class UsersService {
         return {
             ...this.toPublicUser(user),
             isActive: user.isActive,
+            isWholesale: user.isWholesale,
             createdAt: user.createdAt,
             updatedAt: user.updatedAt,
             statistics: {
@@ -569,10 +571,14 @@ let UsersService = class UsersService {
             }
             user.isActive = updateAdminUserDto.isActive;
         }
+        if (updateAdminUserDto.isWholesale !== undefined) {
+            user.isWholesale = updateAdminUserDto.isWholesale;
+        }
         const savedUser = await this.usersRepository.save(user);
         return {
             ...this.toPublicUser(savedUser),
             isActive: savedUser.isActive,
+            isWholesale: savedUser.isWholesale,
             createdAt: savedUser.createdAt,
             updatedAt: savedUser.updatedAt,
         };

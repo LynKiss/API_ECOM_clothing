@@ -48,6 +48,7 @@ const payment_transaction_entity_1 = require("./entities/payment-transaction.ent
 const return_entity_1 = require("./entities/return.entity");
 const shipping_address_entity_1 = require("./entities/shipping-address.entity");
 const membership_service_1 = require("../membership/membership.service");
+const customer_credit_limit_entity_1 = require("../credit-limits/entities/customer-credit-limit.entity");
 let OrdersService = OrdersService_1 = class OrdersService {
     deliveryMethodsRepository;
     shippingAddressesRepository;
@@ -69,6 +70,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
     couponUsageRepository;
     returnsRepository;
     paymentTransactionsRepository;
+    creditLimitRepository;
     notificationsService;
     ordersAdminPublisher;
     settingsService;
@@ -76,7 +78,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
     logger = new common_1.Logger(OrdersService_1.name);
     liveTrackingFreshnessMs = 2 * 60 * 1000;
     stalePaymentTtlMs = 30 * 60 * 1000;
-    constructor(deliveryMethodsRepository, shippingAddressesRepository, ordersRepository, orderTrackingRepository, orderItemsRepository, orderStatusHistoryRepository, cartsRepository, cartItemsRepository, productsRepository, productVariantsRepository, colorsRepository, sizesRepository, inventoryTransactionsRepository, usersRepository, discountsRepository, discountCategoriesRepository, discountProductsRepository, couponUsageRepository, returnsRepository, paymentTransactionsRepository, notificationsService, ordersAdminPublisher, settingsService, membershipService) {
+    constructor(deliveryMethodsRepository, shippingAddressesRepository, ordersRepository, orderTrackingRepository, orderItemsRepository, orderStatusHistoryRepository, cartsRepository, cartItemsRepository, productsRepository, productVariantsRepository, colorsRepository, sizesRepository, inventoryTransactionsRepository, usersRepository, discountsRepository, discountCategoriesRepository, discountProductsRepository, couponUsageRepository, returnsRepository, paymentTransactionsRepository, creditLimitRepository, notificationsService, ordersAdminPublisher, settingsService, membershipService) {
         this.deliveryMethodsRepository = deliveryMethodsRepository;
         this.shippingAddressesRepository = shippingAddressesRepository;
         this.ordersRepository = ordersRepository;
@@ -97,6 +99,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
         this.couponUsageRepository = couponUsageRepository;
         this.returnsRepository = returnsRepository;
         this.paymentTransactionsRepository = paymentTransactionsRepository;
+        this.creditLimitRepository = creditLimitRepository;
         this.notificationsService = notificationsService;
         this.ordersAdminPublisher = ordersAdminPublisher;
         this.settingsService = settingsService;
@@ -263,6 +266,9 @@ let OrdersService = OrdersService_1 = class OrdersService {
     async ensurePaymentMethodEnabled(method) {
         if (method === order_entity_1.PaymentMethod.PAYPAL) {
             throw new common_1.BadRequestException('Payment method is not supported');
+        }
+        if (method === order_entity_1.PaymentMethod.CREDIT) {
+            return;
         }
         const isActive = await this.settingsService.isPaymentMethodActive(method);
         if (!isActive) {
@@ -857,7 +863,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
         return this.buildOrderDetail(order);
     }
     async createOrder(userId, createOrderDto, idempotencyKey) {
-        await this.ensureUserExists(userId);
+        const currentUser = await this.ensureUserExists(userId);
         await this.ensurePaymentMethodEnabled(createOrderDto.paymentMethod);
         if (idempotencyKey) {
             const existing = await this.ordersRepository.findOne({
@@ -927,6 +933,20 @@ let OrdersService = OrdersService_1 = class OrdersService {
             : 0;
         const deliveryCost = this.calculateDeliveryCost(deliveryMethod, subtotalAmount);
         const totalPayment = subtotalAmount - discountAmount + deliveryCost;
+        let creditLimit = null;
+        if (createOrderDto.paymentMethod === order_entity_1.PaymentMethod.CREDIT) {
+            if (!currentUser.isWholesale) {
+                throw new common_1.BadRequestException('Phương thức "Mua nợ" chỉ dành cho khách sỉ được cấp hạn mức tín dụng');
+            }
+            creditLimit = await this.creditLimitRepository.findOne({ where: { userId, isActive: true } });
+            if (!creditLimit) {
+                throw new common_1.BadRequestException('Bạn chưa được cấp hạn mức tín dụng. Vui lòng liên hệ shop để được hỗ trợ');
+            }
+            const available = Number(creditLimit.creditLimit) - Number(creditLimit.currentDebt ?? 0);
+            if (totalPayment > available) {
+                throw new common_1.BadRequestException(`Vượt hạn mức tín dụng. Hạn mức còn lại: ${Math.max(0, available).toLocaleString('vi-VN')}₫`);
+            }
+        }
         const addressSnapshot = this.buildAddressSnapshot(shippingAddress);
         const orderId = (0, node_crypto_1.randomUUID)();
         await (0, transaction_util_1.withDeadlockRetry)(() => this.ordersRepository.manager.transaction(async (entityManager) => {
@@ -1060,6 +1080,9 @@ let OrdersService = OrdersService_1 = class OrdersService {
             await transactionalHistoryRepository.save(history);
             await transactionalCartItemsRepository.delete({ cartId: cart.cartId });
         }));
+        if (createOrderDto.paymentMethod === order_entity_1.PaymentMethod.CREDIT && creditLimit) {
+            await this.creditLimitRepository.update({ userId }, { currentDebt: () => `current_debt + ${totalPayment}` });
+        }
         const createdOrder = await this.findOwnedOrder(userId, orderId);
         await this.notificationsService.sendOrderCreatedNotification(userId, orderId);
         await this.notifyAdminsAboutNewOrder(createdOrder);
@@ -1194,6 +1217,9 @@ let OrdersService = OrdersService_1 = class OrdersService {
             });
             await transactionalHistoryRepository.save(history);
         });
+        if (order.paymentMethod === order_entity_1.PaymentMethod.CREDIT) {
+            await this.creditLimitRepository.update({ userId }, { currentDebt: () => `GREATEST(0, current_debt - ${Number(order.totalPayment)})` });
+        }
         const cancelledOrder = await this.findOwnedOrder(userId, orderId);
         await this.notificationsService.sendOrderStatusNotification(userId, orderId, order_entity_1.OrderStatus.CANCELLED);
         return this.buildOrderDetail(cancelledOrder);
@@ -1202,6 +1228,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
         await this.ensureUserExists(currentUser._id);
         const order = await this.findAnyOrder(orderId);
         const previousStatus = order.orderStatus;
+        const previousPaymentStatus = order.paymentStatus;
         const nextStatus = updateOrderStatusDto.status;
         if (previousStatus === nextStatus) {
             return this.buildOrderDetail(order);
@@ -1368,6 +1395,11 @@ let OrdersService = OrdersService_1 = class OrdersService {
             });
             await transactionalHistoryRepository.save(history);
         });
+        if (nextStatus === order_entity_1.OrderStatus.CANCELLED &&
+            order.paymentMethod === order_entity_1.PaymentMethod.CREDIT &&
+            previousPaymentStatus === order_entity_1.PaymentStatus.UNPAID) {
+            await this.creditLimitRepository.update({ userId: order.userId }, { currentDebt: () => `GREATEST(0, current_debt - ${Number(order.totalPayment)})` });
+        }
         const updatedOrder = await this.findAnyOrder(orderId);
         await this.notificationsService.sendOrderStatusNotification(updatedOrder.userId, orderId, nextStatus);
         if (nextStatus === order_entity_1.OrderStatus.DELIVERED && updatedOrder.userId) {
@@ -2051,6 +2083,9 @@ let OrdersService = OrdersService_1 = class OrdersService {
         if (order.paymentMethod === order_entity_1.PaymentMethod.COD) {
             throw new common_1.BadRequestException('COD tự động ghi nhận khi giao — không cần xác nhận thủ công');
         }
+        if (order.paymentMethod === order_entity_1.PaymentMethod.CREDIT) {
+            throw new common_1.BadRequestException('Đơn hàng mua nợ — công nợ được quản lý riêng qua hạn mức tín dụng');
+        }
         order.paymentStatus = order_entity_1.PaymentStatus.PAID;
         await this.ordersRepository.save(order);
         const tx = this.paymentTransactionsRepository.create({
@@ -2072,14 +2107,14 @@ let OrdersService = OrdersService_1 = class OrdersService {
     async confirmReceivedByCustomer(currentUser, orderId) {
         await this.ensureUserExists(currentUser._id);
         const order = await this.findOrderDetail(currentUser, orderId);
-        if (order.orderStatus !== order_entity_1.OrderStatus.SHIPPING) {
+        if (order.status !== order_entity_1.OrderStatus.SHIPPING) {
             throw new common_1.BadRequestException('Chỉ có thể xác nhận nhận hàng khi đơn đang được giao');
         }
         await this.ordersRepository.manager.transaction(async (em) => {
             const transactionalProductsRepo = em.getRepository(product_entity_1.ProductEntity);
             const transactionalOrderItemsRepo = em.getRepository(order_item_entity_1.OrderItemEntity);
-            await this.releaseReservedOnDelivered(order.orderId, transactionalProductsRepo, transactionalOrderItemsRepo);
-            const dbOrder = await em.getRepository(order_entity_1.OrderEntity).findOneBy({ orderId: order.orderId });
+            await this.releaseReservedOnDelivered(orderId, transactionalProductsRepo, transactionalOrderItemsRepo);
+            const dbOrder = await em.getRepository(order_entity_1.OrderEntity).findOneBy({ orderId });
             if (!dbOrder)
                 return;
             dbOrder.orderStatus = order_entity_1.OrderStatus.DELIVERED;
@@ -2088,7 +2123,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
             }
             await em.save(order_entity_1.OrderEntity, dbOrder);
             await em.save(order_status_history_entity_1.OrderStatusHistoryEntity, em.create(order_status_history_entity_1.OrderStatusHistoryEntity, {
-                orderId: order.orderId,
+                orderId,
                 oldStatus: order_entity_1.OrderStatus.SHIPPING,
                 newStatus: order_entity_1.OrderStatus.DELIVERED,
                 changedBy: currentUser._id,
@@ -2132,7 +2167,9 @@ exports.OrdersService = OrdersService = OrdersService_1 = __decorate([
     __param(17, (0, typeorm_1.InjectRepository)(coupon_usage_entity_1.CouponUsageEntity)),
     __param(18, (0, typeorm_1.InjectRepository)(return_entity_1.ReturnEntity)),
     __param(19, (0, typeorm_1.InjectRepository)(payment_transaction_entity_1.PaymentTransactionEntity)),
+    __param(20, (0, typeorm_1.InjectRepository)(customer_credit_limit_entity_1.CustomerCreditLimitEntity)),
     __metadata("design:paramtypes", [typeorm_2.Repository,
+        typeorm_2.Repository,
         typeorm_2.Repository,
         typeorm_2.Repository,
         typeorm_2.Repository,

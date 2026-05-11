@@ -31,6 +31,7 @@ var PaymentMethod;
     PaymentMethod["VNPAY"] = "vnpay";
     PaymentMethod["ZALOPAY"] = "zalopay";
     PaymentMethod["PAYPAL"] = "paypal";
+    PaymentMethod["CREDIT"] = "credit";
 })(PaymentMethod || (exports.PaymentMethod = PaymentMethod = {}));
 var PaymentStatus;
 (function (PaymentStatus) {

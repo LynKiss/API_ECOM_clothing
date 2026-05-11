@@ -53,6 +53,7 @@ export declare class UsersService {
         };
         items: {
             isActive: boolean;
+            isWholesale: boolean;
             createdAt: Date;
             _id: string;
             username: string;
@@ -64,7 +65,17 @@ export declare class UsersService {
             permissions: import("./users.interface").IUserPermission[];
         }[];
     }>;
-    findProfile(userId: string): Promise<IUser>;
+    findProfile(userId: string): Promise<{
+        isWholesale: boolean;
+        _id: string;
+        username: string;
+        email: string;
+        fullName?: string | null;
+        phoneNumber?: string | null;
+        avatarUrl?: string | null;
+        role: import("./users.interface").IUserRoleSummary;
+        permissions: import("./users.interface").IUserPermission[];
+    }>;
     register(registerUserDto: RegisterUserDto): Promise<{
         _id: string;
         username: string;
@@ -205,6 +216,7 @@ export declare class UsersService {
     }>;
     findAdminUserDetail(userId: string): Promise<{
         isActive: boolean;
+        isWholesale: boolean;
         createdAt: Date;
         updatedAt: Date;
         statistics: {
@@ -222,6 +234,7 @@ export declare class UsersService {
     }>;
     updateAdminUser(actorUserId: string, userId: string, updateAdminUserDto: UpdateAdminUserDto): Promise<{
         isActive: boolean;
+        isWholesale: boolean;
         createdAt: Date;
         updatedAt: Date;
         _id: string;

@@ -8,4 +8,5 @@ export declare class UpdateAdminUserDto {
     avatarUrl?: string;
     role?: UserRole;
     isActive?: boolean;
+    isWholesale?: boolean;
 }
