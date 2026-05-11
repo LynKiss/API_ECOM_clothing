@@ -1890,7 +1890,7 @@ export class ProductsService {
   }
 
   private async enrichProductWithFullDetails(product: ProductEntity) {
-    const [images, descriptionImages, tags, enriched, variants] = await Promise.all([
+    const [images, descriptionImages, tags, enriched, variants, soldResult] = await Promise.all([
       this.productImagesRepository.find({
         where: { productId: product.productId },
         order: { isPrimary: 'DESC', sortOrder: 'ASC', createdAt: 'ASC' },
@@ -1902,6 +1902,16 @@ export class ProductsService {
       this.getProductTagsInternal(product.productId),
       this.enrichProductWithDiscount(product),
       this.getProductVariants(product.productId),
+      this.productsRepository.manager
+        .createQueryBuilder()
+        .select('COALESCE(SUM(oi.quantity), 0)', 'total')
+        .from('order_items', 'oi')
+        .innerJoin('orders', 'o', 'o.order_id = oi.order_id')
+        .where('oi.product_id = :productId', { productId: product.productId })
+        .andWhere('o.order_status NOT IN (:...excluded)', {
+          excluded: ['cancelled', 'returned'],
+        })
+        .getRawOne<{ total: string }>(),
     ]);
 
     const [origin, subcategory, category] = await Promise.all([
@@ -1923,6 +1933,7 @@ export class ProductsService {
     return {
       ...enriched,
       quantityAvailable: variants.length > 0 ? activeVariantStock : enriched.quantityAvailable,
+      soldCount: Number(soldResult?.total ?? 0),
       images,
       descriptionImages,
       tags,

@@ -157,6 +157,7 @@ export declare class ProductsService {
     }>;
     findOne(productId: string): Promise<{
         quantityAvailable: number;
+        soldCount: number;
         images: ProductImageEntity[];
         descriptionImages: ProductDescriptionImageEntity[];
         tags: TagEntity[];

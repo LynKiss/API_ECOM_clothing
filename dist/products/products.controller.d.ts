@@ -118,6 +118,7 @@ export declare class ProductsController {
     createSize(dto: CreateSizeDto): Promise<import("./entities/size.entity").SizeEntity>;
     getProduct(id: string): Promise<{
         quantityAvailable: number;
+        soldCount: number;
         images: import("./entities/product-image.entity").ProductImageEntity[];
         descriptionImages: import("./entities/product-description-image.entity").ProductDescriptionImageEntity[];
         tags: import("./entities/tag.entity").TagEntity[];
