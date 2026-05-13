@@ -1523,7 +1523,7 @@ let ProductsService = class ProductsService {
             if (variant.size)
                 options.set(variant.size.sizeId, variant.size);
         }
-        return [...options.values()];
+        return [...options.values()].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.sizeName.localeCompare(b.sizeName));
     }
     async enrichProductCard(product) {
         const [enriched, variants] = await Promise.all([

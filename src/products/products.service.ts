@@ -2031,7 +2031,9 @@ export class ProductsService {
     for (const variant of variants) {
       if (variant.size) options.set(variant.size.sizeId, variant.size);
     }
-    return [...options.values()];
+    return [...options.values()].sort(
+      (a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.sizeName.localeCompare(b.sizeName),
+    );
   }
 
   private async enrichProductCard(product: ProductEntity) {
