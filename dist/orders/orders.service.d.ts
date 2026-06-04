@@ -15,6 +15,7 @@ import { OrdersAdminPublisher } from './orders-admin.publisher';
 import { SettingsService } from '../settings/settings.service';
 import type { IUser } from '../users/users.interface';
 import { UserEntity } from '../users/entities/user.entity';
+import { CreateCancelPaidRefundDto } from './dto/create-cancel-paid-refund.dto';
 import { CreateReturnDto } from './dto/create-return.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { InitiatePaymentDto } from './dto/initiate-payment.dto';
@@ -24,11 +25,13 @@ import { UpdateOrderTrackingLiveDto } from './dto/update-order-tracking-live.dto
 import { UpdateOrderTrackingManualDto } from './dto/update-order-tracking-manual.dto';
 import { UpdateOrderTrackingModeDto } from './dto/update-order-tracking-mode.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
+import { UpdateRefundStatusDto } from './dto/update-refund-status.dto';
 import { UpdateReturnStatusDto } from './dto/update-return-status.dto';
 import { DeliveryMethodEntity } from './entities/delivery-method.entity';
 import { OrderItemEntity } from './entities/order-item.entity';
 import { OrderTrackingEntity, OrderTrackingMode } from './entities/order-tracking.entity';
 import { OrderEntity, OrderStatus, PaymentMethod, PaymentStatus } from './entities/order.entity';
+import { OrderRefundEntity, OrderRefundReason, OrderRefundStatus } from './entities/order-refund.entity';
 import { OrderStatusHistoryEntity } from './entities/order-status-history.entity';
 import { PaymentTransactionEntity, PaymentTransactionStatus } from './entities/payment-transaction.entity';
 import { ReturnEntity, ReturnInspectionStatus, ReturnStatus } from './entities/return.entity';
@@ -42,6 +45,7 @@ export declare class OrdersService {
     private readonly orderTrackingRepository;
     private readonly orderItemsRepository;
     private readonly orderStatusHistoryRepository;
+    private readonly orderRefundsRepository;
     private readonly cartsRepository;
     private readonly cartItemsRepository;
     private readonly productsRepository;
@@ -64,7 +68,7 @@ export declare class OrdersService {
     private readonly logger;
     private readonly liveTrackingFreshnessMs;
     private readonly stalePaymentTtlMs;
-    constructor(deliveryMethodsRepository: Repository<DeliveryMethodEntity>, shippingAddressesRepository: Repository<ShippingAddressEntity>, ordersRepository: Repository<OrderEntity>, orderTrackingRepository: Repository<OrderTrackingEntity>, orderItemsRepository: Repository<OrderItemEntity>, orderStatusHistoryRepository: Repository<OrderStatusHistoryEntity>, cartsRepository: Repository<ShoppingCartEntity>, cartItemsRepository: Repository<CartItemEntity>, productsRepository: Repository<ProductEntity>, productVariantsRepository: Repository<ProductVariantEntity>, colorsRepository: Repository<ColorEntity>, sizesRepository: Repository<SizeEntity>, inventoryTransactionsRepository: Repository<InventoryTransactionEntity>, usersRepository: Repository<UserEntity>, discountsRepository: Repository<DiscountEntity>, discountCategoriesRepository: Repository<DiscountCategoryEntity>, discountProductsRepository: Repository<DiscountProductEntity>, couponUsageRepository: Repository<CouponUsageEntity>, returnsRepository: Repository<ReturnEntity>, paymentTransactionsRepository: Repository<PaymentTransactionEntity>, creditLimitRepository: Repository<CustomerCreditLimitEntity>, notificationsService: NotificationsService, ordersAdminPublisher: OrdersAdminPublisher, settingsService: SettingsService, membershipService: MembershipService);
+    constructor(deliveryMethodsRepository: Repository<DeliveryMethodEntity>, shippingAddressesRepository: Repository<ShippingAddressEntity>, ordersRepository: Repository<OrderEntity>, orderTrackingRepository: Repository<OrderTrackingEntity>, orderItemsRepository: Repository<OrderItemEntity>, orderStatusHistoryRepository: Repository<OrderStatusHistoryEntity>, orderRefundsRepository: Repository<OrderRefundEntity>, cartsRepository: Repository<ShoppingCartEntity>, cartItemsRepository: Repository<CartItemEntity>, productsRepository: Repository<ProductEntity>, productVariantsRepository: Repository<ProductVariantEntity>, colorsRepository: Repository<ColorEntity>, sizesRepository: Repository<SizeEntity>, inventoryTransactionsRepository: Repository<InventoryTransactionEntity>, usersRepository: Repository<UserEntity>, discountsRepository: Repository<DiscountEntity>, discountCategoriesRepository: Repository<DiscountCategoryEntity>, discountProductsRepository: Repository<DiscountProductEntity>, couponUsageRepository: Repository<CouponUsageEntity>, returnsRepository: Repository<ReturnEntity>, paymentTransactionsRepository: Repository<PaymentTransactionEntity>, creditLimitRepository: Repository<CustomerCreditLimitEntity>, notificationsService: NotificationsService, ordersAdminPublisher: OrdersAdminPublisher, settingsService: SettingsService, membershipService: MembershipService);
     private syncDefaultWarehouseStock;
     private ensureUserExists;
     private findOwnedOrder;
@@ -80,6 +84,16 @@ export declare class OrdersService {
     private isOnlinePaymentMethod;
     private ensurePaymentMethodEnabled;
     private validateReturnStatusTransition;
+    private getReturnStatusLabel;
+    private getReturnReasonLabel;
+    private getReturnInspectionStatusLabel;
+    private getOrderReturnWindow;
+    private getReturnedQuantityForItem;
+    private getDeliveredQuantityForReturn;
+    private calculateLineRefundAmount;
+    private getOrderItemImageMap;
+    private getCompletedRefundAmount;
+    private refreshOrderPaymentAfterRefund;
     private buildAddressSnapshot;
     private getVariantSnapshots;
     private calculateDeliveryCost;
@@ -137,6 +151,10 @@ export declare class OrdersService {
         address: string;
         createdAt: Date;
         updatedAt: Date;
+        returnWindowDays: number;
+        returnDeadline: Date | null;
+        canCreateReturn: boolean;
+        returnBlockedReason: string | null;
         items: {
             id: string;
             productId: string;
@@ -144,10 +162,35 @@ export declare class OrdersService {
             sku: string | null;
             colorName: string | null;
             sizeName: string | null;
+            imageUrl: string | null;
             productName: string;
             quantity: number;
+            quantityDelivered: number;
+            deliveredQuantity: number;
+            returnableQuantity: number;
+            returnedQuantity: number;
+            returnWindowDays: number;
+            returnDeadline: Date | null;
+            canCreateReturn: boolean;
+            returnBlockedReason: string | null;
             unitPrice: string;
             lineTotal: string;
+        }[];
+        returns: {
+            id: string;
+            orderItemId: string;
+            returnQuantity: number;
+            reason: string;
+            description: string | null;
+            status: ReturnStatus;
+            statusLabel: string;
+            inspectionStatus: ReturnInspectionStatus;
+            refundAmount: string | null;
+            maxRefundableAmount: string;
+            returnDeadline: Date | null;
+            returnWindowDays: number;
+            createdAt: Date;
+            updatedAt: Date;
         }[];
         history: {
             id: string;
@@ -176,6 +219,10 @@ export declare class OrdersService {
         address: string;
         createdAt: Date;
         updatedAt: Date;
+        returnWindowDays: number;
+        returnDeadline: Date | null;
+        canCreateReturn: boolean;
+        returnBlockedReason: string | null;
         items: {
             id: string;
             productId: string;
@@ -183,10 +230,35 @@ export declare class OrdersService {
             sku: string | null;
             colorName: string | null;
             sizeName: string | null;
+            imageUrl: string | null;
             productName: string;
             quantity: number;
+            quantityDelivered: number;
+            deliveredQuantity: number;
+            returnableQuantity: number;
+            returnedQuantity: number;
+            returnWindowDays: number;
+            returnDeadline: Date | null;
+            canCreateReturn: boolean;
+            returnBlockedReason: string | null;
             unitPrice: string;
             lineTotal: string;
+        }[];
+        returns: {
+            id: string;
+            orderItemId: string;
+            returnQuantity: number;
+            reason: string;
+            description: string | null;
+            status: ReturnStatus;
+            statusLabel: string;
+            inspectionStatus: ReturnInspectionStatus;
+            refundAmount: string | null;
+            maxRefundableAmount: string;
+            returnDeadline: Date | null;
+            returnWindowDays: number;
+            createdAt: Date;
+            updatedAt: Date;
         }[];
         history: {
             id: string;
@@ -215,6 +287,10 @@ export declare class OrdersService {
         address: string;
         createdAt: Date;
         updatedAt: Date;
+        returnWindowDays: number;
+        returnDeadline: Date | null;
+        canCreateReturn: boolean;
+        returnBlockedReason: string | null;
         items: {
             id: string;
             productId: string;
@@ -222,10 +298,35 @@ export declare class OrdersService {
             sku: string | null;
             colorName: string | null;
             sizeName: string | null;
+            imageUrl: string | null;
             productName: string;
             quantity: number;
+            quantityDelivered: number;
+            deliveredQuantity: number;
+            returnableQuantity: number;
+            returnedQuantity: number;
+            returnWindowDays: number;
+            returnDeadline: Date | null;
+            canCreateReturn: boolean;
+            returnBlockedReason: string | null;
             unitPrice: string;
             lineTotal: string;
+        }[];
+        returns: {
+            id: string;
+            orderItemId: string;
+            returnQuantity: number;
+            reason: string;
+            description: string | null;
+            status: ReturnStatus;
+            statusLabel: string;
+            inspectionStatus: ReturnInspectionStatus;
+            refundAmount: string | null;
+            maxRefundableAmount: string;
+            returnDeadline: Date | null;
+            returnWindowDays: number;
+            createdAt: Date;
+            updatedAt: Date;
         }[];
         history: {
             id: string;
@@ -276,6 +377,10 @@ export declare class OrdersService {
         address: string;
         createdAt: Date;
         updatedAt: Date;
+        returnWindowDays: number;
+        returnDeadline: Date | null;
+        canCreateReturn: boolean;
+        returnBlockedReason: string | null;
         items: {
             id: string;
             productId: string;
@@ -283,10 +388,35 @@ export declare class OrdersService {
             sku: string | null;
             colorName: string | null;
             sizeName: string | null;
+            imageUrl: string | null;
             productName: string;
             quantity: number;
+            quantityDelivered: number;
+            deliveredQuantity: number;
+            returnableQuantity: number;
+            returnedQuantity: number;
+            returnWindowDays: number;
+            returnDeadline: Date | null;
+            canCreateReturn: boolean;
+            returnBlockedReason: string | null;
             unitPrice: string;
             lineTotal: string;
+        }[];
+        returns: {
+            id: string;
+            orderItemId: string;
+            returnQuantity: number;
+            reason: string;
+            description: string | null;
+            status: ReturnStatus;
+            statusLabel: string;
+            inspectionStatus: ReturnInspectionStatus;
+            refundAmount: string | null;
+            maxRefundableAmount: string;
+            returnDeadline: Date | null;
+            returnWindowDays: number;
+            createdAt: Date;
+            updatedAt: Date;
         }[];
         history: {
             id: string;
@@ -463,6 +593,10 @@ export declare class OrdersService {
         address: string;
         createdAt: Date;
         updatedAt: Date;
+        returnWindowDays: number;
+        returnDeadline: Date | null;
+        canCreateReturn: boolean;
+        returnBlockedReason: string | null;
         items: {
             id: string;
             productId: string;
@@ -470,10 +604,35 @@ export declare class OrdersService {
             sku: string | null;
             colorName: string | null;
             sizeName: string | null;
+            imageUrl: string | null;
             productName: string;
             quantity: number;
+            quantityDelivered: number;
+            deliveredQuantity: number;
+            returnableQuantity: number;
+            returnedQuantity: number;
+            returnWindowDays: number;
+            returnDeadline: Date | null;
+            canCreateReturn: boolean;
+            returnBlockedReason: string | null;
             unitPrice: string;
             lineTotal: string;
+        }[];
+        returns: {
+            id: string;
+            orderItemId: string;
+            returnQuantity: number;
+            reason: string;
+            description: string | null;
+            status: ReturnStatus;
+            statusLabel: string;
+            inspectionStatus: ReturnInspectionStatus;
+            refundAmount: string | null;
+            maxRefundableAmount: string;
+            returnDeadline: Date | null;
+            returnWindowDays: number;
+            createdAt: Date;
+            updatedAt: Date;
         }[];
         history: {
             id: string;
@@ -502,6 +661,10 @@ export declare class OrdersService {
         address: string;
         createdAt: Date;
         updatedAt: Date;
+        returnWindowDays: number;
+        returnDeadline: Date | null;
+        canCreateReturn: boolean;
+        returnBlockedReason: string | null;
         items: {
             id: string;
             productId: string;
@@ -509,10 +672,35 @@ export declare class OrdersService {
             sku: string | null;
             colorName: string | null;
             sizeName: string | null;
+            imageUrl: string | null;
             productName: string;
             quantity: number;
+            quantityDelivered: number;
+            deliveredQuantity: number;
+            returnableQuantity: number;
+            returnedQuantity: number;
+            returnWindowDays: number;
+            returnDeadline: Date | null;
+            canCreateReturn: boolean;
+            returnBlockedReason: string | null;
             unitPrice: string;
             lineTotal: string;
+        }[];
+        returns: {
+            id: string;
+            orderItemId: string;
+            returnQuantity: number;
+            reason: string;
+            description: string | null;
+            status: ReturnStatus;
+            statusLabel: string;
+            inspectionStatus: ReturnInspectionStatus;
+            refundAmount: string | null;
+            maxRefundableAmount: string;
+            returnDeadline: Date | null;
+            returnWindowDays: number;
+            createdAt: Date;
+            updatedAt: Date;
         }[];
         history: {
             id: string;
@@ -595,27 +783,137 @@ export declare class OrdersService {
             } | null;
         }[];
     }>;
-    createReturn(userId: string, createReturnDto: CreateReturnDto): Promise<ReturnEntity>;
-    findMyReturns(userId: string): Promise<{
-        id: string;
+    findAllRefunds(params: {
+        page: number;
+        limit: number;
+        status?: string;
+        reason?: string;
+        orderId?: string;
+    }): Promise<{
+        meta: {
+            page: number;
+            limit: number;
+            total: number;
+            totalPages: number;
+        };
+        items: {
+            refundId: string;
+            orderId: string;
+            returnId: string | null;
+            reason: OrderRefundReason;
+            refundStatus: OrderRefundStatus;
+            amount: string;
+            paymentProvider: string | null;
+            manualReference: string | null;
+            note: string | null;
+            createdBy: string | null;
+            updatedBy: string | null;
+            createdAt: Date;
+            updatedAt: Date;
+            order: {
+                status: OrderStatus;
+                paymentStatus: PaymentStatus;
+                totalPayment: string;
+                fullName: string;
+                phone: string;
+            } | null;
+        }[];
+    }>;
+    createCancelPaidOrderRefund(currentUser: IUser, dto: CreateCancelPaidRefundDto): Promise<OrderRefundEntity>;
+    updateRefundStatus(currentUser: IUser, refundId: string, dto: UpdateRefundStatusDto): Promise<OrderRefundEntity | null>;
+    createReturn(userId: string, createReturnDto: CreateReturnDto): Promise<{
+        statusLabel: string;
+        returnWindowDays: number;
+        returnDeadline: Date | null;
+        canCreateReturn: true;
+        returnBlockedReason: string | null;
+        returnId: string;
         orderId: string;
         orderItemId: string;
+        returnQuantity: number;
+        userId: string;
         reason: string;
         description: string | null;
-        status: ReturnStatus;
+        returnStatus: ReturnStatus;
         refundAmount: string | null;
+        maxRefundableAmount: string;
+        refundedQuantity: number;
+        inspectionStatus: ReturnInspectionStatus;
+        inspectionNote: string | null;
+        inspectedBy: string | null;
+        inspectedAt: Date | null;
         createdAt: Date;
         updatedAt: Date;
-    }[]>;
+    }>;
+    findMyReturns(userId: string, query?: {
+        page?: number;
+        limit?: number;
+        search?: string;
+        status?: string;
+        from?: string;
+        to?: string;
+    }): Promise<{
+        items: {
+            id: string;
+            returnId: string;
+            orderId: string;
+            orderItemId: string;
+            productId: string | null;
+            productName: string | null;
+            sku: string | null;
+            colorName: string | null;
+            sizeName: string | null;
+            imageUrl: string | null;
+            returnQuantity: number;
+            reason: string;
+            reasonLabel: string;
+            description: string | null;
+            status: ReturnStatus;
+            statusLabel: string;
+            inspectionStatus: ReturnInspectionStatus;
+            inspectionStatusLabel: string | null;
+            refundAmount: string | null;
+            maxRefundableAmount: string;
+            refundedQuantity: number;
+            returnWindowDays: number;
+            returnDeadline: Date | null;
+            canCreateReturn: boolean;
+            returnBlockedReason: string | null;
+            createdAt: Date;
+            updatedAt: Date;
+        }[];
+        meta: {
+            page: number;
+            limit: number;
+            total: number;
+            totalPages: number;
+        };
+    }>;
     findAllReturns(): Promise<{
+        returnId: string;
         id: string;
         orderId: string;
         userId: string;
         orderItemId: string;
+        productName: string | null;
+        imageUrl: string | null;
+        sku: string | null;
+        colorName: string | null;
+        sizeName: string | null;
+        orderedQuantity: number | null;
+        deliveredQuantity: number | null;
+        returnQuantity: number;
         reason: string;
         description: string | null;
+        returnStatus: ReturnStatus;
         status: ReturnStatus;
+        inspectionStatus: ReturnInspectionStatus;
+        inspectionNote: string | null;
+        inspectedBy: string | null;
+        inspectedAt: Date | null;
         refundAmount: string | null;
+        maxRefundableAmount: string;
+        refundedQuantity: number;
         createdAt: Date;
         updatedAt: Date;
     }[]>;
@@ -641,6 +939,10 @@ export declare class OrdersService {
         address: string;
         createdAt: Date;
         updatedAt: Date;
+        returnWindowDays: number;
+        returnDeadline: Date | null;
+        canCreateReturn: boolean;
+        returnBlockedReason: string | null;
         items: {
             id: string;
             productId: string;
@@ -648,10 +950,35 @@ export declare class OrdersService {
             sku: string | null;
             colorName: string | null;
             sizeName: string | null;
+            imageUrl: string | null;
             productName: string;
             quantity: number;
+            quantityDelivered: number;
+            deliveredQuantity: number;
+            returnableQuantity: number;
+            returnedQuantity: number;
+            returnWindowDays: number;
+            returnDeadline: Date | null;
+            canCreateReturn: boolean;
+            returnBlockedReason: string | null;
             unitPrice: string;
             lineTotal: string;
+        }[];
+        returns: {
+            id: string;
+            orderItemId: string;
+            returnQuantity: number;
+            reason: string;
+            description: string | null;
+            status: ReturnStatus;
+            statusLabel: string;
+            inspectionStatus: ReturnInspectionStatus;
+            refundAmount: string | null;
+            maxRefundableAmount: string;
+            returnDeadline: Date | null;
+            returnWindowDays: number;
+            createdAt: Date;
+            updatedAt: Date;
         }[];
         history: {
             id: string;
@@ -681,6 +1008,10 @@ export declare class OrdersService {
         address: string;
         createdAt: Date;
         updatedAt: Date;
+        returnWindowDays: number;
+        returnDeadline: Date | null;
+        canCreateReturn: boolean;
+        returnBlockedReason: string | null;
         items: {
             id: string;
             productId: string;
@@ -688,10 +1019,35 @@ export declare class OrdersService {
             sku: string | null;
             colorName: string | null;
             sizeName: string | null;
+            imageUrl: string | null;
             productName: string;
             quantity: number;
+            quantityDelivered: number;
+            deliveredQuantity: number;
+            returnableQuantity: number;
+            returnedQuantity: number;
+            returnWindowDays: number;
+            returnDeadline: Date | null;
+            canCreateReturn: boolean;
+            returnBlockedReason: string | null;
             unitPrice: string;
             lineTotal: string;
+        }[];
+        returns: {
+            id: string;
+            orderItemId: string;
+            returnQuantity: number;
+            reason: string;
+            description: string | null;
+            status: ReturnStatus;
+            statusLabel: string;
+            inspectionStatus: ReturnInspectionStatus;
+            refundAmount: string | null;
+            maxRefundableAmount: string;
+            returnDeadline: Date | null;
+            returnWindowDays: number;
+            createdAt: Date;
+            updatedAt: Date;
         }[];
         history: {
             id: string;
@@ -720,6 +1076,10 @@ export declare class OrdersService {
         address: string;
         createdAt: Date;
         updatedAt: Date;
+        returnWindowDays: number;
+        returnDeadline: Date | null;
+        canCreateReturn: boolean;
+        returnBlockedReason: string | null;
         items: {
             id: string;
             productId: string;
@@ -727,10 +1087,35 @@ export declare class OrdersService {
             sku: string | null;
             colorName: string | null;
             sizeName: string | null;
+            imageUrl: string | null;
             productName: string;
             quantity: number;
+            quantityDelivered: number;
+            deliveredQuantity: number;
+            returnableQuantity: number;
+            returnedQuantity: number;
+            returnWindowDays: number;
+            returnDeadline: Date | null;
+            canCreateReturn: boolean;
+            returnBlockedReason: string | null;
             unitPrice: string;
             lineTotal: string;
+        }[];
+        returns: {
+            id: string;
+            orderItemId: string;
+            returnQuantity: number;
+            reason: string;
+            description: string | null;
+            status: ReturnStatus;
+            statusLabel: string;
+            inspectionStatus: ReturnInspectionStatus;
+            refundAmount: string | null;
+            maxRefundableAmount: string;
+            returnDeadline: Date | null;
+            returnWindowDays: number;
+            createdAt: Date;
+            updatedAt: Date;
         }[];
         history: {
             id: string;

@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { createHash } from 'crypto';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { CreateNewsDto } from './dto/create-news.dto';
 import { NewsStatusFilter, QueryNewsDto } from './dto/query-news.dto';
 import { UpdateNewsDto } from './dto/update-news.dto';
@@ -128,6 +128,66 @@ export class NewsService {
     const saved = await this.newsCommentRepository.save(comment);
     const user = await this.usersRepository.findOneBy({ userId }).catch(() => null);
     return { id: saved.commentId, content: saved.content, likeCount: 0, dislikeCount: 0, createdAt: saved.createdAt, author: { username: user?.username ?? 'Độc giả' } };
+  }
+
+  async findMyComments(
+    userId: string,
+    params: { page: number; limit: number; status?: string; search?: string },
+  ) {
+    const page = params.page;
+    const limit = params.limit;
+    const where: Record<string, unknown> = { userId };
+    if (params.status && params.status !== 'all') {
+      where.status = params.status as NewsCommentStatus;
+    }
+
+    const comments = await this.newsCommentRepository.find({
+      where,
+      order: { createdAt: 'DESC' },
+    });
+    const newsIds = [...new Set(comments.map((comment) => comment.newsId))];
+    const articles = newsIds.length
+      ? await this.newsRepository.find({
+          where: { newsId: In(newsIds) },
+          select: ['newsId', 'title', 'slug'],
+        })
+      : [];
+    const articleMap = new Map(articles.map((article) => [article.newsId, article]));
+
+    const mapped = comments.map((comment) => {
+        const article = articleMap.get(comment.newsId);
+        return {
+          id: comment.commentId,
+          commentId: comment.commentId,
+          newsId: comment.newsId,
+          articleTitle: article?.title ?? null,
+          articleSlug: article?.slug ?? null,
+          content: comment.content,
+          imageUrls: [],
+          likeCount: comment.likeCount,
+          dislikeCount: comment.dislikeCount,
+          status: comment.status,
+          createdAt: comment.createdAt,
+          updatedAt: comment.updatedAt,
+        };
+      });
+    const normalizedSearch = params.search?.trim().toLowerCase();
+    const filtered = normalizedSearch
+      ? mapped.filter((item) =>
+          [
+            item.articleTitle,
+            item.content,
+            item.status,
+            item.articleSlug,
+            item.commentId,
+          ].filter(Boolean).join(' ').toLowerCase().includes(normalizedSearch),
+        )
+      : mapped;
+    const total = filtered.length;
+    return {
+      items: filtered.slice((page - 1) * limit, page * limit),
+      meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    };
   }
 
   async likeNewsComment(commentId: string) {

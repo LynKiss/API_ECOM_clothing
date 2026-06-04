@@ -105,6 +105,66 @@ let CommentsService = class CommentsService {
             updatedAt: savedReview.updatedAt,
         };
     }
+    async findMyReviews(userId, params) {
+        await this.ensureUserExists(userId);
+        const page = params.page;
+        const limit = params.limit;
+        const where = { userId };
+        if (params.status && params.status !== 'all') {
+            where.status = params.status;
+        }
+        const reviews = await this.commentsRepository.find({
+            where,
+            order: { createdAt: 'DESC' },
+        });
+        const productIds = [...new Set(reviews.map((item) => item.productId))];
+        const products = productIds.length
+            ? await this.productsRepository.find({
+                where: { productId: (0, typeorm_2.In)(productIds) },
+                select: ['productId', 'productName', 'productSlug'],
+            })
+            : [];
+        const productMap = new Map(products.map((item) => [item.productId, item]));
+        const mapped = reviews.map((review) => {
+            const product = productMap.get(review.productId);
+            return {
+                id: review.commentId,
+                commentId: review.commentId,
+                productId: review.productId,
+                productName: product?.productName ?? null,
+                productSlug: product?.productSlug ?? null,
+                orderItemId: review.orderItemId,
+                content: review.content,
+                rating: review.rating,
+                imageUrls: [],
+                likeCount: review.likeCount,
+                dislikeCount: review.dislikeCount,
+                status: review.status,
+                createdAt: review.createdAt,
+                updatedAt: review.updatedAt,
+            };
+        });
+        const normalizedSearch = params.search?.trim().toLowerCase();
+        const filtered = normalizedSearch
+            ? mapped.filter((item) => [
+                item.productName,
+                item.content,
+                item.status,
+                item.productId,
+                item.commentId,
+            ].filter(Boolean).join(' ').toLowerCase().includes(normalizedSearch))
+            : mapped;
+        const total = filtered.length;
+        return {
+            items: filtered.slice((page - 1) * limit, page * limit),
+            meta: {
+                page,
+                limit,
+                total,
+                totalPages: Math.ceil(total / limit),
+            },
+        };
+    }
     async likeComment(commentId) {
         const comment = await this.commentsRepository.findOneBy({ commentId });
         if (!comment)

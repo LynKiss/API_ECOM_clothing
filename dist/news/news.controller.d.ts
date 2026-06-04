@@ -79,6 +79,28 @@ export declare class NewsController {
     unlikeArticle(id: string): Promise<{
         likeCount: number;
     }>;
+    getMyComments(currentUser: IUser, page?: string, limit?: string, status?: string, search?: string): Promise<{
+        items: {
+            id: string;
+            commentId: string;
+            newsId: string;
+            articleTitle: string | null;
+            articleSlug: string | null;
+            content: string;
+            imageUrls: never[];
+            likeCount: number;
+            dislikeCount: number;
+            status: import("./entities/news-comment.entity").NewsCommentStatus;
+            createdAt: Date;
+            updatedAt: Date;
+        }[];
+        meta: {
+            page: number;
+            limit: number;
+            total: number;
+            totalPages: number;
+        };
+    }>;
     getComments(id: string): Promise<{
         id: string;
         content: string;

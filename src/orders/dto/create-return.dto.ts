@@ -1,4 +1,4 @@
-import { IsString, MaxLength } from 'class-validator';
+import { IsInt, IsString, Max, MaxLength, Min } from 'class-validator';
 
 export class CreateReturnDto {
   @IsString()
@@ -8,6 +8,11 @@ export class CreateReturnDto {
   @IsString()
   @MaxLength(20)
   orderItemId: string;
+
+  @IsInt()
+  @Min(1)
+  @Max(9999)
+  returnQuantity: number;
 
   @IsString()
   @MaxLength(255)

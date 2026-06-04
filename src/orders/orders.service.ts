@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+﻿import { randomUUID } from 'node:crypto';
 import { createHmac } from 'node:crypto';
 import {
   BadRequestException,
@@ -37,6 +37,7 @@ import type { IUser } from '../users/users.interface';
 import { UserEntity } from '../users/entities/user.entity';
 import { withDeadlockRetry } from '../common/transaction.util';
 import { verifyMomoSignature } from '../common/payment-signature.util';
+import { CreateCancelPaidRefundDto } from './dto/create-cancel-paid-refund.dto';
 import { CreateReturnDto } from './dto/create-return.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { InitiatePaymentDto } from './dto/initiate-payment.dto';
@@ -46,6 +47,7 @@ import { UpdateOrderTrackingLiveDto } from './dto/update-order-tracking-live.dto
 import { UpdateOrderTrackingManualDto } from './dto/update-order-tracking-manual.dto';
 import { UpdateOrderTrackingModeDto } from './dto/update-order-tracking-mode.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
+import { UpdateRefundStatusDto } from './dto/update-refund-status.dto';
 import { UpdateReturnStatusDto } from './dto/update-return-status.dto';
 import { DeliveryMethodEntity } from './entities/delivery-method.entity';
 import { OrderItemEntity } from './entities/order-item.entity';
@@ -59,6 +61,11 @@ import {
   PaymentMethod,
   PaymentStatus,
 } from './entities/order.entity';
+import {
+  OrderRefundEntity,
+  OrderRefundReason,
+  OrderRefundStatus,
+} from './entities/order-refund.entity';
 import { OrderStatusHistoryEntity } from './entities/order-status-history.entity';
 import {
   PaymentTransactionEntity,
@@ -73,11 +80,14 @@ import { ShippingAddressEntity } from './entities/shipping-address.entity';
 import { MembershipService } from '../membership/membership.service';
 import { CustomerCreditLimitEntity } from '../credit-limits/entities/customer-credit-limit.entity';
 
+const RETURN_WINDOW_DAYS = 7;
+const RETURN_WINDOW_MS = RETURN_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+
 @Injectable()
 export class OrdersService {
   private readonly logger = new Logger(OrdersService.name);
   private readonly liveTrackingFreshnessMs = 2 * 60 * 1000;
-  private readonly stalePaymentTtlMs = 30 * 60 * 1000; // 30 phút
+  private readonly stalePaymentTtlMs = 30 * 60 * 1000; // 30 phÃºt
 
   constructor(
     @InjectRepository(DeliveryMethodEntity)
@@ -92,6 +102,8 @@ export class OrdersService {
     private readonly orderItemsRepository: Repository<OrderItemEntity>,
     @InjectRepository(OrderStatusHistoryEntity)
     private readonly orderStatusHistoryRepository: Repository<OrderStatusHistoryEntity>,
+    @InjectRepository(OrderRefundEntity)
+    private readonly orderRefundsRepository: Repository<OrderRefundEntity>,
     @InjectRepository(ShoppingCartEntity)
     private readonly cartsRepository: Repository<ShoppingCartEntity>,
     @InjectRepository(CartItemEntity)
@@ -159,7 +171,7 @@ export class OrdersService {
   private async ensureUserExists(userId: string) {
     const user = await this.usersRepository.findOneBy({ userId });
     if (!user) {
-      throw new UnauthorizedException('Người dùng không tồn tại');
+      throw new UnauthorizedException('NgÆ°á»i dÃ¹ng khÃ´ng tá»“n táº¡i');
     }
 
     return user;
@@ -358,8 +370,8 @@ export class OrdersService {
     if (method === PaymentMethod.PAYPAL) {
       throw new BadRequestException('Payment method is not supported');
     }
-    // CREDIT là phương thức nội bộ (mua nợ), không qua payment gateway
-    // Validation được xử lý riêng trong createOrder
+    // CREDIT lÃ  phÆ°Æ¡ng thá»©c ná»™i bá»™ (mua ná»£), khÃ´ng qua payment gateway
+    // Validation Ä‘Æ°á»£c xá»­ lÃ½ riÃªng trong createOrder
     if (method === PaymentMethod.CREDIT) {
       return;
     }
@@ -378,13 +390,185 @@ export class OrdersService {
       [ReturnStatus.REQUESTED]: [ReturnStatus.APPROVED, ReturnStatus.REJECTED],
       [ReturnStatus.APPROVED]: [ReturnStatus.RECEIVED, ReturnStatus.REJECTED],
       [ReturnStatus.REJECTED]: [],
-      // RECEIVED → INSPECTED (sau khi admin gọi inspect endpoint)
-      [ReturnStatus.RECEIVED]: [ReturnStatus.INSPECTED, ReturnStatus.REFUNDED],
+      // RECEIVED â†’ INSPECTED (sau khi admin gá»i inspect endpoint)
+      [ReturnStatus.RECEIVED]: [ReturnStatus.INSPECTED],
       [ReturnStatus.INSPECTED]: [ReturnStatus.REFUNDED],
       [ReturnStatus.REFUNDED]: [],
     };
 
     return allowedTransitions[currentStatus].includes(nextStatus);
+  }
+
+  private getReturnStatusLabel(status: string) {
+    const labels: Record<string, string> = {
+      requested: 'Đã gửi yêu cầu',
+      approved: 'Đã duyệt',
+      received: 'Đã nhận hàng trả về',
+      inspected: 'Đã kiểm tra hàng',
+      refunded: 'Đã hoàn tiền',
+      rejected: 'Từ chối',
+    };
+    return labels[String(status).toLowerCase()] ?? status;
+  }
+
+  private getReturnReasonLabel(reason?: string | null) {
+    const normalized = String(reason ?? '').toLowerCase();
+    const labels: Record<string, string> = {
+      wrong_item: 'Nhận sai sản phẩm',
+      damaged: 'Sản phẩm lỗi hoặc hư hỏng',
+      defective: 'Sản phẩm lỗi hoặc hư hỏng',
+      not_as_described: 'Không đúng mô tả',
+      changed_mind: 'Không còn nhu cầu',
+      other: 'Lý do khác',
+    };
+    return labels[normalized] ?? reason ?? 'Lý do khác';
+  }
+
+  private getReturnInspectionStatusLabel(status?: string | null) {
+    const labels: Record<string, string> = {
+      pending: 'Chờ kiểm tra',
+      usable: 'Hàng đạt, nhập lại kho',
+      damaged: 'Hàng hỏng',
+      return_to_supplier: 'Trả nhà cung cấp',
+    };
+    return status ? labels[String(status).toLowerCase()] ?? status : null;
+  }
+  private async getOrderReturnWindow(order: OrderEntity) {
+    const returnableStatuses = new Set<string>([
+      OrderStatus.DELIVERED,
+      OrderStatus.PARTIAL_DELIVERED,
+    ]);
+    if (!returnableStatuses.has(order.orderStatus)) {
+      return {
+        returnWindowDays: RETURN_WINDOW_DAYS,
+        deliveredAt: null,
+        returnDeadline: null,
+        canCreateReturn: false,
+        returnBlockedReason: 'RETURN_NOT_DELIVERED_YET',
+      };
+    }
+
+    const deliveredHistory = await this.orderStatusHistoryRepository.findOne({
+      where: [
+        { orderId: order.orderId, newStatus: OrderStatus.DELIVERED },
+        { orderId: order.orderId, newStatus: OrderStatus.PARTIAL_DELIVERED },
+      ],
+      order: { createdAt: 'ASC', historyId: 'ASC' },
+    });
+    const deliveredAt = deliveredHistory?.createdAt ?? order.updatedAt;
+    const returnDeadline = new Date(deliveredAt.getTime() + RETURN_WINDOW_MS);
+    const canCreateReturn = Date.now() <= returnDeadline.getTime();
+    return {
+      returnWindowDays: RETURN_WINDOW_DAYS,
+      deliveredAt,
+      returnDeadline,
+      canCreateReturn,
+      returnBlockedReason: canCreateReturn ? null : 'RETURN_WINDOW_EXPIRED',
+    };
+  }
+
+  private async getReturnedQuantityForItem(
+    orderItemId: string,
+    excludeReturnId?: string,
+  ) {
+    const qb = this.returnsRepository
+      .createQueryBuilder('r')
+      .select('COALESCE(SUM(r.return_quantity), 0)', 'quantity')
+      .where('r.order_item_id = :orderItemId', { orderItemId })
+      .andWhere('r.return_status != :rejected', {
+        rejected: ReturnStatus.REJECTED,
+      });
+
+    if (excludeReturnId) {
+      qb.andWhere('r.return_id != :excludeReturnId', { excludeReturnId });
+    }
+
+    const row = await qb.getRawOne<{ quantity: string }>();
+    return Number(row?.quantity ?? 0);
+  }
+
+  private getDeliveredQuantityForReturn(orderItem: OrderItemEntity) {
+    return orderItem.quantityDelivered > 0
+      ? orderItem.quantityDelivered
+      : orderItem.quantity;
+  }
+
+  private calculateLineRefundAmount(orderItem: OrderItemEntity, quantity: number) {
+    const unitNet = Number(orderItem.lineTotal) / Math.max(1, orderItem.quantity);
+    return Math.max(0, unitNet * quantity);
+  }
+
+  private async getOrderItemImageMap(items: OrderItemEntity[]) {
+    const productIds = [...new Set(items.map((item) => item.productId).filter(Boolean))];
+    const variantIds = [
+      ...new Set(items.map((item) => item.variantId).filter((id): id is string => Boolean(id))),
+    ];
+
+    const [productRows, variantRows] = await Promise.all([
+      productIds.length
+        ? this.productsRepository.manager
+            .createQueryBuilder()
+            .select('pi.product_id', 'productId')
+            .addSelect('pi.image_url', 'imageUrl')
+            .from('product_images', 'pi')
+            .where('pi.product_id IN (:...productIds)', { productIds })
+            .orderBy('pi.is_primary', 'DESC')
+            .addOrderBy('pi.sort_order', 'ASC')
+            .addOrderBy('pi.product_image_id', 'ASC')
+            .getRawMany<{ productId: string; imageUrl: string }>()
+        : Promise.resolve([]),
+      variantIds.length
+        ? this.productsRepository.manager
+            .createQueryBuilder()
+            .select('vi.variant_id', 'variantId')
+            .addSelect('vi.image_url', 'imageUrl')
+            .from('variant_images', 'vi')
+            .where('vi.variant_id IN (:...variantIds)', { variantIds })
+            .orderBy('vi.sort_order', 'ASC')
+            .addOrderBy('vi.variant_image_id', 'ASC')
+            .getRawMany<{ variantId: string; imageUrl: string }>()
+        : Promise.resolve([]),
+    ]);
+
+    const productImageMap = new Map<string, string>();
+    for (const row of productRows) {
+      if (!productImageMap.has(row.productId)) productImageMap.set(row.productId, row.imageUrl);
+    }
+
+    const variantImageMap = new Map<string, string>();
+    for (const row of variantRows) {
+      if (!variantImageMap.has(row.variantId)) variantImageMap.set(row.variantId, row.imageUrl);
+    }
+
+    return new Map(
+      items.map((item) => [
+        item.orderItemId,
+        (item.variantId ? variantImageMap.get(item.variantId) : null) ??
+          productImageMap.get(item.productId) ??
+          null,
+      ]),
+    );
+  }
+
+  private async getCompletedRefundAmount(orderId: string) {
+    const row = await this.orderRefundsRepository
+      .createQueryBuilder('refund')
+      .select('COALESCE(SUM(refund.amount), 0)', 'amount')
+      .where('refund.order_id = :orderId', { orderId })
+      .andWhere('refund.refund_status = :status', {
+        status: OrderRefundStatus.COMPLETED,
+      })
+      .getRawOne<{ amount: string }>();
+    return Number(row?.amount ?? 0);
+  }
+
+  private async refreshOrderPaymentAfterRefund(order: OrderEntity) {
+    const completedRefunds = await this.getCompletedRefundAmount(order.orderId);
+    const totalPayment = Number(order.totalPayment);
+    if (completedRefunds >= totalPayment && totalPayment > 0) {
+      order.paymentStatus = PaymentStatus.REFUNDED;
+      await this.ordersRepository.save(order);
+    }
   }
 
   private buildAddressSnapshot(address: ShippingAddressEntity) {
@@ -557,7 +741,7 @@ export class OrdersService {
   }
 
   private async buildOrderDetail(order: OrderEntity) {
-    const [items, history] = await Promise.all([
+    const [items, history, returns] = await Promise.all([
       this.orderItemsRepository.find({
         where: { orderId: order.orderId },
         order: { createdAt: 'ASC', orderItemId: 'ASC' },
@@ -565,6 +749,10 @@ export class OrdersService {
       this.orderStatusHistoryRepository.find({
         where: { orderId: order.orderId },
         order: { createdAt: 'ASC', historyId: 'ASC' },
+      }),
+      this.returnsRepository.find({
+        where: { orderId: order.orderId },
+        order: { createdAt: 'ASC', returnId: 'ASC' },
       }),
     ]);
 
@@ -579,6 +767,8 @@ export class OrdersService {
       });
       for (const u of users) usersMap.set(u.userId, u.username);
     }
+    const returnWindow = await this.getOrderReturnWindow(order);
+    const itemImageMap = await this.getOrderItemImageMap(items);
 
     return {
       id: order.orderId,
@@ -598,17 +788,63 @@ export class OrdersService {
       address: order.address,
       createdAt: order.createdAt,
       updatedAt: order.updatedAt,
-      items: items.map((item) => ({
-        id: item.orderItemId,
-        productId: item.productId,
-        variantId: item.variantId,
-        sku: item.sku,
-        colorName: item.colorName,
-        sizeName: item.sizeName,
-        productName: item.productName,
-        quantity: item.quantity,
-        unitPrice: item.unitPrice,
-        lineTotal: item.lineTotal,
+      returnWindowDays: returnWindow.returnWindowDays,
+      returnDeadline: returnWindow.returnDeadline,
+      canCreateReturn: returnWindow.canCreateReturn,
+      returnBlockedReason: returnWindow.returnBlockedReason,
+      items: items.map((item) => {
+        const itemReturns = returns.filter(
+          (r) =>
+            r.orderItemId === item.orderItemId &&
+            r.returnStatus !== ReturnStatus.REJECTED,
+        );
+        const returnedQuantity = itemReturns.reduce(
+          (sum, r) => sum + Number(r.returnQuantity ?? 0),
+          0,
+        );
+        const deliveredQuantity = this.getDeliveredQuantityForReturn(item);
+        return {
+          id: item.orderItemId,
+          productId: item.productId,
+          variantId: item.variantId,
+          sku: item.sku,
+          colorName: item.colorName,
+          sizeName: item.sizeName,
+          imageUrl: itemImageMap.get(item.orderItemId) ?? null,
+          productName: item.productName,
+          quantity: item.quantity,
+          quantityDelivered: item.quantityDelivered,
+          deliveredQuantity,
+          returnableQuantity: Math.max(0, deliveredQuantity - returnedQuantity),
+          returnedQuantity,
+          returnWindowDays: returnWindow.returnWindowDays,
+          returnDeadline: returnWindow.returnDeadline,
+          canCreateReturn:
+            returnWindow.canCreateReturn &&
+            deliveredQuantity - returnedQuantity > 0,
+          returnBlockedReason:
+            deliveredQuantity - returnedQuantity > 0
+              ? returnWindow.returnBlockedReason
+              : 'NO_RETURNABLE_QUANTITY',
+          unitPrice: item.unitPrice,
+          lineTotal: item.lineTotal,
+        };
+      }),
+      returns: returns.map((item) => ({
+        id: item.returnId,
+        orderItemId: item.orderItemId,
+        returnQuantity: item.returnQuantity,
+        reason: item.reason,
+        description: item.description,
+        status: item.returnStatus,
+        statusLabel: this.getReturnStatusLabel(item.returnStatus),
+        inspectionStatus: item.inspectionStatus,
+        refundAmount: item.refundAmount,
+        maxRefundableAmount: item.maxRefundableAmount,
+        returnDeadline: returnWindow.returnDeadline,
+        returnWindowDays: returnWindow.returnWindowDays,
+        createdAt: item.createdAt,
+        updatedAt: item.updatedAt,
       })),
       history: history.map((entry) => ({
         id: entry.historyId,
@@ -687,6 +923,10 @@ export class OrdersService {
     productRepository: Repository<ProductEntity>,
     orderItemsRepository: Repository<OrderItemEntity>,
     entityManager?: EntityManager,
+    options?: {
+      performedBy?: string | null;
+      note?: string;
+    },
   ) {
     const items = await orderItemsRepository.find({
       where: { orderId },
@@ -694,7 +934,7 @@ export class OrdersService {
     const variantRepository = entityManager?.getRepository(ProductVariantEntity);
 
     for (const item of items) {
-      // Lock pessimistic khi restock — tránh race condition khi cancel song song
+      // Lock pessimistic khi restock â€” trÃ¡nh race condition khi cancel song song
       const product = await productRepository.findOne({
         where: { productId: item.productId },
         lock: entityManager ? { mode: 'pessimistic_write' } : undefined,
@@ -724,6 +964,22 @@ export class OrdersService {
             entityManager,
             item.productId,
             item.quantity,
+          );
+          await entityManager.save(
+            InventoryTransactionEntity,
+            entityManager.create(InventoryTransactionEntity, {
+              productId: item.productId,
+              performedBy: options?.performedBy ?? null,
+              transactionType: InventoryTransactionType.RETURN_IN,
+              quantityChange: item.quantity,
+              quantityBefore: product.quantityAvailable - item.quantity,
+              quantityAfter: product.quantityAvailable,
+              referenceType: 'ORDER',
+              referenceId: orderId,
+              unitCostAtTime: product.avgCost ?? null,
+              note: options?.note ?? 'Restock by order cancellation',
+              relatedOrderId: orderId,
+            }),
           );
         }
       }
@@ -857,8 +1113,8 @@ export class OrdersService {
   }
 
   /**
-   * Khi đơn DELIVERED — không restock, chỉ giải phóng quantityReserved
-   * (hàng đã thực sự rời kho, không trả về stock).
+   * Khi Ä‘Æ¡n DELIVERED â€” khÃ´ng restock, chá»‰ giáº£i phÃ³ng quantityReserved
+   * (hÃ ng Ä‘Ã£ thá»±c sá»± rá»i kho, khÃ´ng tráº£ vá» stock).
    */
   private async releaseReservedOnDelivered(
     orderId: string,
@@ -903,14 +1159,14 @@ export class OrdersService {
   }
 
   /**
-   * Đặt hàng cho khách vãng lai (không cần đăng ký tài khoản).
+   * Äáº·t hÃ ng cho khÃ¡ch vÃ£ng lai (khÃ´ng cáº§n Ä‘Äƒng kÃ½ tÃ i khoáº£n).
    *
-   * Khác createOrder thường:
-   * 1. Không cần userId — guest cung cấp thông tin shipping trực tiếp
-   * 2. Tạo userId tạm dạng `guest-<uuid>` chỉ để thoả mãn FK constraint
-   * 3. Không lấy giá từ cart (vì không có cart) — lấy giá hiện tại từ products
-   * 4. Không support discount code (đơn giản hơn) — có thể bổ sung sau
-   * 5. Vẫn dùng pessimistic lock + idempotency + reservation pattern
+   * KhÃ¡c createOrder thÆ°á»ng:
+   * 1. KhÃ´ng cáº§n userId â€” guest cung cáº¥p thÃ´ng tin shipping trá»±c tiáº¿p
+   * 2. Táº¡o userId táº¡m dáº¡ng `guest-<uuid>` chá»‰ Ä‘á»ƒ thoáº£ mÃ£n FK constraint
+   * 3. KhÃ´ng láº¥y giÃ¡ tá»« cart (vÃ¬ khÃ´ng cÃ³ cart) â€” láº¥y giÃ¡ hiá»‡n táº¡i tá»« products
+   * 4. KhÃ´ng support discount code (Ä‘Æ¡n giáº£n hÆ¡n) â€” cÃ³ thá»ƒ bá»• sung sau
+   * 5. Váº«n dÃ¹ng pessimistic lock + idempotency + reservation pattern
    */
   async createGuestOrder(dto: import('./dto/create-guest-order.dto').CreateGuestOrderDto, idempotencyKey?: string) {
     await this.ensurePaymentMethodEnabled(dto.paymentMethod);
@@ -928,7 +1184,7 @@ export class OrdersService {
       deliveryId: dto.deliveryId,
     });
     if (!deliveryMethod || !deliveryMethod.isActive) {
-      throw new NotFoundException('Phương thức giao hàng không khả dụng');
+      throw new NotFoundException('PhÆ°Æ¡ng thá»©c giao hÃ ng khÃ´ng kháº£ dá»¥ng');
     }
 
     const productIds = [...new Set(dto.items.map((it) => it.productId))];
@@ -948,12 +1204,12 @@ export class OrdersService {
     for (const item of dto.items) {
       const product = productsById.get(item.productId);
       if (!product || !product.isShow) {
-        throw new BadRequestException('Sản phẩm không khả dụng');
+        throw new BadRequestException('Sáº£n pháº©m khÃ´ng kháº£ dá»¥ng');
       }
       if (item.quantity > product.quantityAvailable) {
         if (!dto.allowBackorder) {
           throw new BadRequestException(
-            `Sản phẩm ${product.productName} không đủ tồn kho`,
+            `Sáº£n pháº©m ${product.productName} khÃ´ng Ä‘á»§ tá»“n kho`,
           );
         }
         isBackorder = true;
@@ -1025,7 +1281,7 @@ export class OrdersService {
             lock: { mode: 'pessimistic_write' },
           });
           if (!product) {
-            throw new BadRequestException('Sản phẩm không tồn tại');
+            throw new BadRequestException('Sáº£n pháº©m khÃ´ng tá»“n táº¡i');
           }
           const variantSnapshot = item.variantId ? guestVariantsById.get(item.variantId) : null;
           const variant = item.variantId
@@ -1041,7 +1297,7 @@ export class OrdersService {
           const isLineBackorder = item.quantity > availableQuantity;
           if (isLineBackorder && !dto.allowBackorder) {
             throw new BadRequestException(
-              `Sản phẩm ${product.productName} không đủ tồn kho`,
+              `Sáº£n pháº©m ${product.productName} khÃ´ng Ä‘á»§ tá»“n kho`,
             );
           }
 
@@ -1119,21 +1375,21 @@ export class OrdersService {
   }
 
   /**
-   * Tra cứu đơn guest bằng orderId + phone (verify nhẹ — anyone biết cả 2 sẽ xem được).
+   * Tra cá»©u Ä‘Æ¡n guest báº±ng orderId + phone (verify nháº¹ â€” anyone biáº¿t cáº£ 2 sáº½ xem Ä‘Æ°á»£c).
    */
   async findGuestOrder(orderId: string, phone: string) {
     if (!phone || !orderId) {
-      throw new BadRequestException('Cần cung cấp orderId và phone');
+      throw new BadRequestException('Cáº§n cung cáº¥p orderId vÃ  phone');
     }
     const order = await this.ordersRepository.findOne({
       where: { orderId },
     });
-    if (!order) throw new NotFoundException('Không tìm thấy đơn hàng');
+    if (!order) throw new NotFoundException('KhÃ´ng tÃ¬m tháº¥y Ä‘Æ¡n hÃ ng');
     if (!(await this.isGuestUserId(order.userId))) {
-      throw new UnauthorizedException('Đơn này thuộc tài khoản đăng ký, hãy đăng nhập để xem');
+      throw new UnauthorizedException('ÄÆ¡n nÃ y thuá»™c tÃ i khoáº£n Ä‘Äƒng kÃ½, hÃ£y Ä‘Äƒng nháº­p Ä‘á»ƒ xem');
     }
     if (order.phone.replace(/\s+/g, '') !== phone.replace(/\s+/g, '')) {
-      throw new UnauthorizedException('Số điện thoại không khớp');
+      throw new UnauthorizedException('Sá»‘ Ä‘iá»‡n thoáº¡i khÃ´ng khá»›p');
     }
     return this.buildOrderDetail(order);
   }
@@ -1215,7 +1471,7 @@ export class OrdersService {
       if (cartItem.quantity > availableQuantity) {
         if (!createOrderDto.allowBackorder) {
           throw new BadRequestException(
-            `Sản phẩm ${product.productName} không đủ tồn kho`,
+            `Sáº£n pháº©m ${product.productName} khÃ´ng Ä‘á»§ tá»“n kho`,
           );
         }
         isBackorder = true;
@@ -1244,20 +1500,20 @@ export class OrdersService {
     );
     const totalPayment = subtotalAmount - discountAmount + deliveryCost;
 
-    // Kiểm tra và xử lý hạn mức tín dụng cho đơn mua nợ
+    // Kiá»ƒm tra vÃ  xá»­ lÃ½ háº¡n má»©c tÃ­n dá»¥ng cho Ä‘Æ¡n mua ná»£
     let creditLimit: import('../credit-limits/entities/customer-credit-limit.entity').CustomerCreditLimitEntity | null = null;
     if (createOrderDto.paymentMethod === PaymentMethod.CREDIT) {
       if (!currentUser.isWholesale) {
-        throw new BadRequestException('Phương thức "Mua nợ" chỉ dành cho khách sỉ được cấp hạn mức tín dụng');
+        throw new BadRequestException('PhÆ°Æ¡ng thá»©c "Mua ná»£" chá»‰ dÃ nh cho khÃ¡ch sá»‰ Ä‘Æ°á»£c cáº¥p háº¡n má»©c tÃ­n dá»¥ng');
       }
       creditLimit = await this.creditLimitRepository.findOne({ where: { userId, isActive: true as unknown as boolean } });
       if (!creditLimit) {
-        throw new BadRequestException('Bạn chưa được cấp hạn mức tín dụng. Vui lòng liên hệ shop để được hỗ trợ');
+        throw new BadRequestException('Báº¡n chÆ°a Ä‘Æ°á»£c cáº¥p háº¡n má»©c tÃ­n dá»¥ng. Vui lÃ²ng liÃªn há»‡ shop Ä‘á»ƒ Ä‘Æ°á»£c há»— trá»£');
       }
       const available = Number(creditLimit.creditLimit) - Number(creditLimit.currentDebt ?? 0);
       if (totalPayment > available) {
         throw new BadRequestException(
-          `Vượt hạn mức tín dụng. Hạn mức còn lại: ${Math.max(0, available).toLocaleString('vi-VN')}₫`,
+          `VÆ°á»£t háº¡n má»©c tÃ­n dá»¥ng. Háº¡n má»©c cÃ²n láº¡i: ${Math.max(0, available).toLocaleString('vi-VN')}â‚«`,
         );
       }
     }
@@ -1266,8 +1522,8 @@ export class OrdersService {
     const orderId = randomUUID();
 
     // Stock deduction inside a transaction with pessimistic_write lock per product
-    // → tránh oversell khi nhiều request đồng thời cùng mua sản phẩm cuối cùng.
-    // → tự retry tối đa 3 lần khi gặp deadlock MySQL.
+    // â†’ trÃ¡nh oversell khi nhiá»u request Ä‘á»“ng thá»i cÃ¹ng mua sáº£n pháº©m cuá»‘i cÃ¹ng.
+    // â†’ tá»± retry tá»‘i Ä‘a 3 láº§n khi gáº·p deadlock MySQL.
     await withDeadlockRetry(() =>
       this.ordersRepository.manager.transaction(async (entityManager) => {
         const transactionalOrdersRepository =
@@ -1326,7 +1582,7 @@ export class OrdersService {
         await transactionalOrdersRepository.save(order);
 
         for (const cartItem of cartItems) {
-          // Lock row pessimistic — block các request khác đọc cùng product trong khi check + trừ stock
+          // Lock row pessimistic â€” block cÃ¡c request khÃ¡c Ä‘á»c cÃ¹ng product trong khi check + trá»« stock
           const product = await transactionalProductsRepository.findOne({
             where: { productId: cartItem.productId },
             lock: { mode: 'pessimistic_write' },
@@ -1351,7 +1607,7 @@ export class OrdersService {
             cartItem.quantity > availableQuantity;
           if (isLineBackorder && !createOrderDto.allowBackorder) {
             throw new BadRequestException(
-              `Sản phẩm ${product.productName} không đủ tồn kho`,
+              `Sáº£n pháº©m ${product.productName} khÃ´ng Ä‘á»§ tá»“n kho`,
             );
           }
 
@@ -1371,8 +1627,8 @@ export class OrdersService {
           });
           await transactionalOrderItemsRepository.save(orderItem);
 
-          // Backorder line: KHÔNG trừ stock, KHÔNG ghi inventory transaction
-          // (sẽ xử lý sau khi nhập hàng về và admin fulfill)
+          // Backorder line: KHÃ”NG trá»« stock, KHÃ”NG ghi inventory transaction
+          // (sáº½ xá»­ lÃ½ sau khi nháº­p hÃ ng vá» vÃ  admin fulfill)
           if (isLineBackorder) {
             continue;
           }
@@ -1433,7 +1689,7 @@ export class OrdersService {
             : OrderStatus.PENDING,
           changedBy: userId,
           note: isBackorder
-            ? 'Đơn hàng đặt trước — chờ nhập kho'
+            ? 'Đơn hàng đặt trước - chờ nhập kho'
             : 'Đơn hàng đã được tạo',
         });
         await transactionalHistoryRepository.save(history);
@@ -1442,7 +1698,7 @@ export class OrdersService {
       }),
     );
 
-    // Ghi nhận công nợ cho đơn mua nợ
+    // Ghi nháº­n cÃ´ng ná»£ cho Ä‘Æ¡n mua ná»£
     if (createOrderDto.paymentMethod === PaymentMethod.CREDIT && creditLimit) {
       await this.creditLimitRepository.update(
         { userId },
@@ -1581,6 +1837,10 @@ export class OrdersService {
       throw new BadRequestException('Order cannot be cancelled');
     }
 
+    if (order.paymentStatus === PaymentStatus.PAID) {
+      throw new BadRequestException('PAID_ORDER_CANCEL_REQUIRES_REFUND');
+    }
+
     await this.ordersRepository.manager.transaction(async (entityManager) => {
       const transactionalOrdersRepository =
         entityManager.getRepository(OrderEntity);
@@ -1591,47 +1851,18 @@ export class OrdersService {
       const transactionalHistoryRepository = entityManager.getRepository(
         OrderStatusHistoryEntity,
       );
-      const transactionalInventoryTransactionsRepository =
-        entityManager.getRepository(InventoryTransactionEntity);
       const transactionalDiscountsRepository =
         entityManager.getRepository(DiscountEntity);
       const transactionalCouponUsageRepository =
         entityManager.getRepository(CouponUsageEntity);
 
-      const items = await transactionalOrderItemsRepository.find({
-        where: { orderId: order.orderId },
-      });
       await this.restockOrderItems(
         order.orderId,
         transactionalProductsRepository,
         transactionalOrderItemsRepository,
         entityManager,
+        { performedBy: userId, note: 'Restock by customer cancellation' },
       );
-
-      for (const item of items) {
-        const product = await transactionalProductsRepository.findOneBy({
-          productId: item.productId,
-        });
-        const inventoryTransaction =
-          transactionalInventoryTransactionsRepository.create({
-            productId: item.productId,
-            performedBy: userId,
-            transactionType: InventoryTransactionType.RETURN_IN,
-            quantityChange: item.quantity,
-            quantityBefore: product
-              ? product.quantityAvailable - item.quantity
-              : null,
-            quantityAfter: product ? product.quantityAvailable : null,
-            referenceType: 'ORDER',
-            referenceId: order.orderId,
-            unitCostAtTime: product?.avgCost ?? null,
-            note: 'Restock by order cancellation',
-            relatedOrderId: order.orderId,
-          });
-        await transactionalInventoryTransactionsRepository.save(
-          inventoryTransaction,
-        );
-      }
 
       await this.revertDiscountUsage(
         order,
@@ -1652,7 +1883,7 @@ export class OrdersService {
       await transactionalHistoryRepository.save(history);
     });
 
-    // Hoàn lại công nợ khi hủy đơn mua nợ
+    // HoÃ n láº¡i cÃ´ng ná»£ khi há»§y Ä‘Æ¡n mua ná»£
     if (order.paymentMethod === PaymentMethod.CREDIT) {
       await this.creditLimitRepository.update(
         { userId },
@@ -1720,7 +1951,7 @@ export class OrdersService {
       const transactionalCouponUsageRepository =
         entityManager.getRepository(CouponUsageEntity);
 
-      // BACKORDERED → PENDING: fulfill backorder, trừ stock chính thức
+      // BACKORDERED â†’ PENDING: fulfill backorder, trá»« stock chÃ­nh thá»©c
       if (
         previousStatus === OrderStatus.BACKORDERED &&
         nextStatus === OrderStatus.PENDING
@@ -1735,12 +1966,12 @@ export class OrdersService {
           });
           if (!product) {
             throw new BadRequestException(
-              `Sản phẩm trong đơn không còn tồn tại`,
+              `Sáº£n pháº©m trong Ä‘Æ¡n khÃ´ng cÃ²n tá»“n táº¡i`,
             );
           }
           if (item.quantity > product.quantityAvailable) {
             throw new BadRequestException(
-              `Sản phẩm ${product.productName} vẫn chưa đủ tồn kho để fulfill`,
+              `Sáº£n pháº©m ${product.productName} váº«n chÆ°a Ä‘á»§ tá»“n kho Ä‘á»ƒ fulfill`,
             );
           }
           const qtyBefore = product.quantityAvailable;
@@ -1775,7 +2006,7 @@ export class OrdersService {
         nextStatus === OrderStatus.CANCELLED ||
         nextStatus === OrderStatus.RETURNED
       ) {
-        // Backorder bị cancel: KHÔNG restock vì chưa từng trừ stock
+        // Backorder bá»‹ cancel: KHÃ”NG restock vÃ¬ chÆ°a tá»«ng trá»« stock
         const isBackorderCancel =
           previousStatus === OrderStatus.BACKORDERED &&
           nextStatus === OrderStatus.CANCELLED;
@@ -1803,50 +2034,33 @@ export class OrdersService {
           where: { orderId: order.orderId },
         });
 
-        // RETURNED: KHÔNG tự restock, chỉ giải phóng reserved (nếu chưa giao)
-        // → Hàng phải qua inspection trước. Stock chỉ được restock khi
+        // RETURNED: KHÃ”NG tá»± restock, chá»‰ giáº£i phÃ³ng reserved (náº¿u chÆ°a giao)
+        // â†’ HÃ ng pháº£i qua inspection trÆ°á»›c. Stock chá»‰ Ä‘Æ°á»£c restock khi
         //   admin inspect = USABLE.
-        // CANCELLED: vẫn restock bình thường (hàng chưa rời kho).
+        // CANCELLED: váº«n restock bÃ¬nh thÆ°á»ng (hÃ ng chÆ°a rá»i kho).
         if (nextStatus === OrderStatus.CANCELLED) {
+          if (order.paymentStatus === PaymentStatus.PAID) {
+            throw new BadRequestException('PAID_ORDER_CANCEL_REQUIRES_REFUND');
+          }
           await this.restockOrderItems(
             order.orderId,
             transactionalProductsRepository,
             transactionalOrderItemsRepository,
             entityManager,
+            {
+              performedBy: currentUser._id,
+              note: updateOrderStatusDto.note ?? 'Restock by admin cancellation',
+            },
           );
-          for (const item of items) {
-            const product = await transactionalProductsRepository.findOneBy({
-              productId: item.productId,
-            });
-            const inventoryTransaction =
-              transactionalInventoryTransactionsRepository.create({
-                productId: item.productId,
-                performedBy: currentUser._id,
-                transactionType: InventoryTransactionType.RETURN_IN,
-                quantityChange: item.quantity,
-                quantityBefore: product
-                  ? product.quantityAvailable - item.quantity
-                  : null,
-                quantityAfter: product ? product.quantityAvailable : null,
-                referenceType: 'ORDER',
-                referenceId: order.orderId,
-                unitCostAtTime: product?.avgCost ?? null,
-                note: 'Restock by admin cancellation',
-                relatedOrderId: order.orderId,
-              });
-            await transactionalInventoryTransactionsRepository.save(
-              inventoryTransaction,
-            );
-          }
           await this.revertDiscountUsage(
             order,
             transactionalDiscountsRepository,
             transactionalCouponUsageRepository,
           );
         } else if (nextStatus === OrderStatus.RETURNED) {
-          // Hàng trả về — giải phóng quantityReserved nếu có (đơn chưa DELIVERED)
-          // Stock physical KHÔNG cộng lại — chờ inspect.
-          // Nếu đơn đã DELIVERED rồi: reserved = 0, không có gì để release.
+          // HÃ ng tráº£ vá» â€” giáº£i phÃ³ng quantityReserved náº¿u cÃ³ (Ä‘Æ¡n chÆ°a DELIVERED)
+          // Stock physical KHÃ”NG cá»™ng láº¡i â€” chá» inspect.
+          // Náº¿u Ä‘Æ¡n Ä‘Ã£ DELIVERED rá»“i: reserved = 0, khÃ´ng cÃ³ gÃ¬ Ä‘á»ƒ release.
           for (const item of items) {
             const product = await transactionalProductsRepository.findOne({
               where: { productId: item.productId },
@@ -1854,7 +2068,7 @@ export class OrdersService {
             });
             if (!product) continue;
 
-            // Tạo Return record với inspectionStatus = PENDING
+            // Táº¡o Return record vá»›i inspectionStatus = PENDING
             const returnRecord = entityManager
               .getRepository(ReturnEntity)
               .create({
@@ -1864,6 +2078,9 @@ export class OrdersService {
                 reason:
                   updateOrderStatusDto.note ?? 'Returned by admin',
                 description: null,
+                returnQuantity: this.getDeliveredQuantityForReturn(item),
+                maxRefundableAmount: item.lineTotal,
+                refundedQuantity: 0,
                 returnStatus: ReturnStatus.RECEIVED,
                 inspectionStatus: ReturnInspectionStatus.PENDING,
                 refundAmount: null,
@@ -1875,7 +2092,7 @@ export class OrdersService {
         }
       }
 
-      // Khi DELIVERED: giải phóng reserved (hàng đã rời kho thật sự)
+      // Khi DELIVERED: giáº£i phÃ³ng reserved (hÃ ng Ä‘Ã£ rá»i kho tháº­t sá»±)
       if (nextStatus === OrderStatus.DELIVERED) {
         await this.releaseReservedOnDelivered(
           order.orderId,
@@ -1887,10 +2104,10 @@ export class OrdersService {
       order.orderStatus = nextStatus;
 
       // Payment status logic:
-      // - COD + DELIVERED → PAID (khách trả tiền khi nhận hàng)
-      // - Online (non-COD) khi CONFIRMED: KHÔNG tự đặt PAID nữa.
-      //   Phải có PaymentTransaction từ gateway hoặc admin xác nhận thủ công.
-      //   (giữ nguyên paymentStatus hiện tại — thường là UNPAID)
+      // - COD + DELIVERED â†’ PAID (khÃ¡ch tráº£ tiá»n khi nháº­n hÃ ng)
+      // - Online (non-COD) khi CONFIRMED: KHÃ”NG tá»± Ä‘áº·t PAID ná»¯a.
+      //   Pháº£i cÃ³ PaymentTransaction tá»« gateway hoáº·c admin xÃ¡c nháº­n thá»§ cÃ´ng.
+      //   (giá»¯ nguyÃªn paymentStatus hiá»‡n táº¡i â€” thÆ°á»ng lÃ  UNPAID)
       if (
         nextStatus === OrderStatus.DELIVERED &&
         order.paymentMethod === PaymentMethod.COD
@@ -1924,7 +2141,7 @@ export class OrdersService {
       await transactionalHistoryRepository.save(history);
     });
 
-    // Hoàn lại công nợ khi admin hủy đơn mua nợ chưa thanh toán
+    // HoÃ n láº¡i cÃ´ng ná»£ khi admin há»§y Ä‘Æ¡n mua ná»£ chÆ°a thanh toÃ¡n
     if (
       nextStatus === OrderStatus.CANCELLED &&
       order.paymentMethod === PaymentMethod.CREDIT &&
@@ -2004,7 +2221,7 @@ export class OrdersService {
 
     await this.paymentTransactionsRepository.save(paymentTransaction);
 
-    // Sentinel value — frontend detects this and shows simulation modal
+    // Sentinel value â€” frontend detects this and shows simulation modal
     let paymentUrl = `https://payment-gateway.local?provider=${order.paymentMethod}&transactionRef=${transactionRef}&orderId=${orderId}`;
 
     if (order.paymentMethod === PaymentMethod.MOMO) {
@@ -2020,7 +2237,7 @@ export class OrdersService {
       if (momoUrl) {
         paymentUrl = momoUrl;
       } else {
-        console.warn('[MoMo] Không lấy được paymentUrl — kiểm tra credentials và BACKEND_URL trong .env');
+        console.warn('[MoMo] KhÃ´ng láº¥y Ä‘Æ°á»£c paymentUrl â€” kiá»ƒm tra credentials vÃ  BACKEND_URL trong .env');
       }
     }
 
@@ -2108,7 +2325,7 @@ export class OrdersService {
     const { accessKey, secretKey } = await this.settingsService.getMomoConfig();
     if (!secretKey || !accessKey) return { message: 'ignored' };
 
-    // 1. VERIFY HMAC SIGNATURE — chống fake callback
+    // 1. VERIFY HMAC SIGNATURE â€” chá»‘ng fake callback
     if (!verifyMomoSignature(body, accessKey, secretKey)) {
       throw new UnauthorizedException('Invalid MoMo signature');
     }
@@ -2129,7 +2346,7 @@ export class OrdersService {
       message?: string;
     };
 
-    // momoOrderId = transactionRef (requestId) — look up the real order via transactions table
+    // momoOrderId = transactionRef (requestId) â€” look up the real order via transactions table
     const txRef = momoOrderId ?? requestId;
     if (!txRef) return { message: 'missing orderId' };
 
@@ -2145,7 +2362,7 @@ export class OrdersService {
       .catch(() => null);
     if (!order) return { message: 'order not found' };
 
-    // 2. IDEMPOTENCY — Nếu đã xử lý transId này thành SUCCESS rồi thì return luôn
+    // 2. IDEMPOTENCY â€” Náº¿u Ä‘Ã£ xá»­ lÃ½ transId nÃ y thÃ nh SUCCESS rá»“i thÃ¬ return luÃ´n
     if (
       transaction &&
       transaction.transactionStatus === PaymentTransactionStatus.SUCCESS &&
@@ -2154,7 +2371,7 @@ export class OrdersService {
       return { message: 'already processed', transId };
     }
 
-    // 3. AMOUNT MISMATCH GUARD — Tránh fake amount nhỏ
+    // 3. AMOUNT MISMATCH GUARD â€” TrÃ¡nh fake amount nhá»
     if (amount !== undefined && amount !== null) {
       const expectedAmount = Number(order.totalPayment);
       const reportedAmount = Number(amount);
@@ -2163,7 +2380,7 @@ export class OrdersService {
         Number.isFinite(reportedAmount) &&
         Math.abs(expectedAmount - reportedAmount) > 0.01
       ) {
-        // Lưu transaction là FAILED do amount mismatch — không update order
+        // LÆ°u transaction lÃ  FAILED do amount mismatch â€” khÃ´ng update order
         if (transaction) {
           transaction.transactionStatus = PaymentTransactionStatus.FAILED;
           transaction.gatewayCode = 'AMOUNT_MISMATCH';
@@ -2231,7 +2448,7 @@ export class OrdersService {
       throw new BadRequestException('Payment provider does not match order');
     }
 
-    // 1. IDEMPOTENCY — Tránh xử lý lại cùng transactionRef
+    // 1. IDEMPOTENCY â€” TrÃ¡nh xá»­ lÃ½ láº¡i cÃ¹ng transactionRef
     const existingTx = await this.paymentTransactionsRepository.findOne({
       where: { transactionRef: paymentCallbackDto.transactionRef },
     });
@@ -2249,7 +2466,7 @@ export class OrdersService {
       };
     }
 
-    // 2. AMOUNT MISMATCH GUARD — Không cho fake amount nhỏ hơn
+    // 2. AMOUNT MISMATCH GUARD â€” KhÃ´ng cho fake amount nhá» hÆ¡n
     if (paymentCallbackDto.success) {
       const expectedAmount = Number(order.totalPayment);
       const reportedAmount = Number(paymentCallbackDto.amount);
@@ -2313,15 +2530,15 @@ export class OrdersService {
   }
 
   /**
-   * Cron reconciliation — chạy mỗi 15 phút.
-   * Tìm các đơn online (non-COD) đã PENDING + paymentStatus=UNPAID quá 30 phút
-   * → Đối soát với gateway hoặc tự cancel để giải phóng stock.
+   * Cron reconciliation â€” cháº¡y má»—i 15 phÃºt.
+   * TÃ¬m cÃ¡c Ä‘Æ¡n online (non-COD) Ä‘Ã£ PENDING + paymentStatus=UNPAID quÃ¡ 30 phÃºt
+   * â†’ Äá»‘i soÃ¡t vá»›i gateway hoáº·c tá»± cancel Ä‘á»ƒ giáº£i phÃ³ng stock.
    *
-   * Hiện tại: KHÔNG gọi MoMo query API thật (cần endpoint /v2/gateway/api/query
-   * + signature) — sẽ AUTO CANCEL đơn nếu quá 30 phút không thanh toán.
-   * Stock sẽ được restock thông qua updateOrderStatus → CANCELLED.
+   * Hiá»‡n táº¡i: KHÃ”NG gá»i MoMo query API tháº­t (cáº§n endpoint /v2/gateway/api/query
+   * + signature) â€” sáº½ AUTO CANCEL Ä‘Æ¡n náº¿u quÃ¡ 30 phÃºt khÃ´ng thanh toÃ¡n.
+   * Stock sáº½ Ä‘Æ°á»£c restock thÃ´ng qua updateOrderStatus â†’ CANCELLED.
    */
-  @Cron('*/15 * * * *') // mỗi 15 phút
+  @Cron('*/15 * * * *') // má»—i 15 phÃºt
   async reconcileStalePayments() {
     try {
       const cutoff = new Date(Date.now() - this.stalePaymentTtlMs);
@@ -2338,7 +2555,7 @@ export class OrdersService {
           ]),
           createdAt: LessThan(cutoff),
         },
-        take: 100, // batch nhỏ để tránh nghẽn DB
+        take: 100, // batch nhá» Ä‘á»ƒ trÃ¡nh ngháº½n DB
       });
 
       if (stale.length === 0) return;
@@ -2349,7 +2566,7 @@ export class OrdersService {
 
       for (const order of stale) {
         try {
-          // Kiểm tra có PaymentTransaction SUCCESS chưa (case race condition)
+          // Kiá»ƒm tra cÃ³ PaymentTransaction SUCCESS chÆ°a (case race condition)
           const succeeded = await this.paymentTransactionsRepository.findOne({
             where: {
               orderId: order.orderId,
@@ -2367,7 +2584,7 @@ export class OrdersService {
             const items = await em.find(OrderItemEntity, {
               where: { orderId: order.orderId },
             });
-            // Restock từng item
+            // Restock tá»«ng item
             for (const item of items) {
               const product = await em.findOne(ProductEntity, {
                 where: { productId: item.productId },
@@ -2498,12 +2715,233 @@ export class OrdersService {
     };
   }
 
+  async findAllRefunds(params: {
+    page: number;
+    limit: number;
+    status?: string;
+    reason?: string;
+    orderId?: string;
+  }) {
+    const { page, limit, status, reason, orderId } = params;
+    const skip = (page - 1) * limit;
+    const query = this.orderRefundsRepository.createQueryBuilder('refund');
+
+    if (status) {
+      query.andWhere('refund.refundStatus = :status', { status });
+    }
+    if (reason) {
+      query.andWhere('refund.reason = :reason', { reason });
+    }
+    if (orderId) {
+      query.andWhere('refund.orderId = :orderId', { orderId });
+    }
+
+    query.orderBy('refund.createdAt', 'DESC').skip(skip).take(limit);
+    const [items, total] = await query.getManyAndCount();
+
+    const orderIds = [...new Set(items.map((item) => item.orderId))];
+    const orders = orderIds.length
+      ? await this.ordersRepository.find({ where: { orderId: In(orderIds) } })
+      : [];
+    const orderMap = new Map(orders.map((order) => [order.orderId, order]));
+
+    return {
+      meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
+      items: items.map((item) => {
+        const order = orderMap.get(item.orderId);
+        return {
+          refundId: item.refundId,
+          orderId: item.orderId,
+          returnId: item.returnId,
+          reason: item.reason,
+          refundStatus: item.refundStatus,
+          amount: item.amount,
+          paymentProvider: item.paymentProvider,
+          manualReference: item.manualReference,
+          note: item.note,
+          createdBy: item.createdBy,
+          updatedBy: item.updatedBy,
+          createdAt: item.createdAt,
+          updatedAt: item.updatedAt,
+          order: order
+            ? {
+                status: order.orderStatus,
+                paymentStatus: order.paymentStatus,
+                totalPayment: order.totalPayment,
+                fullName: order.fullName,
+                phone: order.phone,
+              }
+            : null,
+        };
+      }),
+    };
+  }
+
+  async createCancelPaidOrderRefund(
+    currentUser: IUser,
+    dto: CreateCancelPaidRefundDto,
+  ) {
+    await this.ensureUserExists(currentUser._id);
+    const order = await this.findAnyOrder(dto.orderId);
+
+    if (
+      ![OrderStatus.PENDING, OrderStatus.CONFIRMED].includes(order.orderStatus)
+    ) {
+      throw new BadRequestException('ORDER_NOT_ELIGIBLE_FOR_CANCEL_REFUND');
+    }
+    if (order.paymentStatus !== PaymentStatus.PAID) {
+      throw new BadRequestException('ORDER_PAYMENT_NOT_PAID');
+    }
+
+    const duplicate = await this.orderRefundsRepository.findOne({
+      where: {
+        orderId: order.orderId,
+        reason: OrderRefundReason.CANCEL_PAID_ORDER,
+        refundStatus: In([OrderRefundStatus.PENDING, OrderRefundStatus.APPROVED]),
+      },
+    });
+    if (duplicate) {
+      throw new BadRequestException('OPEN_CANCEL_REFUND_ALREADY_EXISTS');
+    }
+
+    const completedRefunds = await this.getCompletedRefundAmount(order.orderId);
+    const refundable = Math.max(0, Number(order.totalPayment) - completedRefunds);
+    const amount = dto.amount ?? refundable;
+    if (!Number.isFinite(amount) || amount <= 0 || amount > refundable) {
+      throw new BadRequestException('REFUND_AMOUNT_EXCEEDS_AVAILABLE');
+    }
+
+    return this.orderRefundsRepository.save(
+      this.orderRefundsRepository.create({
+        orderId: order.orderId,
+        returnId: null,
+        reason: OrderRefundReason.CANCEL_PAID_ORDER,
+        refundStatus: OrderRefundStatus.PENDING,
+        amount: amount.toFixed(2),
+        paymentProvider: order.paymentMethod,
+        manualReference: null,
+        note: dto.note ?? 'Pending paid order cancellation refund',
+        createdBy: currentUser._id,
+        updatedBy: currentUser._id,
+      }),
+    );
+  }
+
+  async updateRefundStatus(
+    currentUser: IUser,
+    refundId: string,
+    dto: UpdateRefundStatusDto,
+  ) {
+    await this.ensureUserExists(currentUser._id);
+    const refund = await this.orderRefundsRepository.findOneBy({ refundId });
+    if (!refund) {
+      throw new NotFoundException('Refund not found');
+    }
+    if (refund.refundStatus === OrderRefundStatus.COMPLETED) {
+      throw new BadRequestException('Refund already completed');
+    }
+    if (
+      dto.status === OrderRefundStatus.COMPLETED &&
+      !(dto.manualReference?.trim() || dto.note?.trim() || refund.manualReference)
+    ) {
+      throw new BadRequestException('REFUND_COMPLETION_REFERENCE_REQUIRED');
+    }
+
+    refund.refundStatus = dto.status;
+    refund.manualReference =
+      dto.manualReference?.trim() || refund.manualReference || null;
+    refund.note = dto.note?.trim() || refund.note;
+    refund.updatedBy = currentUser._id;
+
+    await this.ordersRepository.manager.transaction(async (em) => {
+      await em.save(OrderRefundEntity, refund);
+
+      if (dto.status !== OrderRefundStatus.COMPLETED) {
+        return;
+      }
+
+      const order = await em.findOne(OrderEntity, {
+        where: { orderId: refund.orderId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!order) {
+        throw new NotFoundException('Order not found');
+      }
+
+      if (refund.reason === OrderRefundReason.CANCEL_PAID_ORDER) {
+        if (order.orderStatus === OrderStatus.CANCELLED) {
+          return;
+        }
+        if (
+          ![OrderStatus.PENDING, OrderStatus.CONFIRMED].includes(order.orderStatus)
+        ) {
+          throw new BadRequestException('ORDER_NOT_ELIGIBLE_FOR_CANCEL_REFUND');
+        }
+
+        await this.restockOrderItems(
+          order.orderId,
+          em.getRepository(ProductEntity),
+          em.getRepository(OrderItemEntity),
+          em,
+          {
+            performedBy: currentUser._id,
+            note: 'Restock after paid order refund completion',
+          },
+        );
+        await this.revertDiscountUsage(
+          order,
+          em.getRepository(DiscountEntity),
+          em.getRepository(CouponUsageEntity),
+        );
+        order.orderStatus = OrderStatus.CANCELLED;
+        order.paymentStatus = PaymentStatus.REFUNDED;
+        await em.save(OrderEntity, order);
+        await em.save(
+          OrderStatusHistoryEntity,
+          em.create(OrderStatusHistoryEntity, {
+            orderId: order.orderId,
+            oldStatus: OrderStatus.PENDING,
+            newStatus: OrderStatus.CANCELLED,
+            changedBy: currentUser._id,
+            note: 'Cancel paid order after manual refund completion',
+          }),
+        );
+      }
+
+      if (refund.reason === OrderRefundReason.RETURN && refund.returnId) {
+        const returnRequest = await em.findOne(ReturnEntity, {
+          where: { returnId: refund.returnId },
+        });
+        if (returnRequest) {
+          returnRequest.refundAmount = refund.amount;
+          returnRequest.refundedQuantity = returnRequest.returnQuantity;
+          returnRequest.returnStatus = ReturnStatus.REFUNDED;
+          await em.save(ReturnEntity, returnRequest);
+        }
+        if (Number(refund.amount) >= Number(order.totalPayment)) {
+          order.paymentStatus = PaymentStatus.REFUNDED;
+          await em.save(OrderEntity, order);
+        }
+      }
+    });
+
+    return this.orderRefundsRepository.findOneBy({ refundId });
+  }
+
   async createReturn(userId: string, createReturnDto: CreateReturnDto) {
     await this.ensureUserExists(userId);
     const order = await this.findOwnedOrder(userId, createReturnDto.orderId);
 
-    if (order.orderStatus !== OrderStatus.DELIVERED) {
-      throw new BadRequestException('Only delivered orders can be returned');
+    if (
+      ![OrderStatus.DELIVERED, OrderStatus.PARTIAL_DELIVERED].includes(
+        order.orderStatus,
+      )
+    ) {
+      throw new BadRequestException('RETURN_NOT_DELIVERED_YET');
+    }
+    const returnWindow = await this.getOrderReturnWindow(order);
+    if (!returnWindow.canCreateReturn) {
+      throw new BadRequestException(returnWindow.returnBlockedReason);
     }
 
     const orderItem = await this.orderItemsRepository.findOneBy({
@@ -2514,69 +2952,208 @@ export class OrdersService {
       throw new NotFoundException('Order item not found');
     }
 
-    const existingReturn = await this.returnsRepository.findOneBy({
-      userId,
-      orderItemId: createReturnDto.orderItemId,
-    });
-    if (existingReturn) {
-      throw new BadRequestException('Return request already exists');
+    const deliveredQuantity = this.getDeliveredQuantityForReturn(orderItem);
+    if (deliveredQuantity <= 0) {
+      throw new BadRequestException('Item has not been delivered');
     }
+
+    const alreadyReturned = await this.getReturnedQuantityForItem(
+      createReturnDto.orderItemId,
+    );
+    const remainingReturnable = Math.max(0, deliveredQuantity - alreadyReturned);
+    if (createReturnDto.returnQuantity > remainingReturnable) {
+      throw new BadRequestException(
+        `RETURN_QUANTITY_EXCEEDS_AVAILABLE:${remainingReturnable}`,
+      );
+    }
+
+    const maxRefundableAmount = this.calculateLineRefundAmount(
+      orderItem,
+      createReturnDto.returnQuantity,
+    );
 
     const created = this.returnsRepository.create({
       orderId: order.orderId,
       orderItemId: createReturnDto.orderItemId,
+      returnQuantity: createReturnDto.returnQuantity,
       userId,
       reason: createReturnDto.reason,
       description: createReturnDto.description ?? null,
       returnStatus: ReturnStatus.REQUESTED,
       refundAmount: null,
+      maxRefundableAmount: maxRefundableAmount.toFixed(2),
+      refundedQuantity: 0,
     });
 
     const saved = await this.returnsRepository.save(created);
-    await this.notificationsService.createNotification({
+    await this.notificationsService.sendReturnStatusNotification({
       userId,
-      title: 'Yeu cau tra hang da duoc tao',
-      message: `Yeu cau tra hang cho don ${order.orderId} da duoc tiep nhan.`,
-      metadata: { returnId: saved.returnId, orderId: order.orderId },
+      orderId: order.orderId,
+      returnId: saved.returnId,
+      status: saved.returnStatus,
     });
 
-    return saved;
+    return {
+      ...saved,
+      statusLabel: this.getReturnStatusLabel(saved.returnStatus),
+      returnWindowDays: returnWindow.returnWindowDays,
+      returnDeadline: returnWindow.returnDeadline,
+      canCreateReturn: returnWindow.canCreateReturn,
+      returnBlockedReason: returnWindow.returnBlockedReason,
+    };
   }
 
-  async findMyReturns(userId: string) {
+  async findMyReturns(
+    userId: string,
+    query: {
+      page?: number;
+      limit?: number;
+      search?: string;
+      status?: string;
+      from?: string;
+      to?: string;
+    } = {},
+  ) {
     await this.ensureUserExists(userId);
+    const page = Math.max(1, Number(query.page) || 1);
+    const limit = Math.min(100, Math.max(1, Number(query.limit) || 10));
+    const normalizedSearch = query.search?.trim().toLowerCase();
     const items = await this.returnsRepository.find({
       where: { userId },
       order: { createdAt: 'DESC' },
     });
 
-    return items.map((item) => ({
-      id: item.returnId,
-      orderId: item.orderId,
-      orderItemId: item.orderItemId,
-      reason: item.reason,
-      description: item.description,
-      status: item.returnStatus,
-      refundAmount: item.refundAmount,
-      createdAt: item.createdAt,
-      updatedAt: item.updatedAt,
-    }));
+    const orderItemIds = [...new Set(items.map((item) => item.orderItemId))];
+    const orderIds = [...new Set(items.map((item) => item.orderId))];
+    const [orderItems, orders] = await Promise.all([
+      orderItemIds.length
+        ? this.orderItemsRepository.find({
+            where: { orderItemId: In(orderItemIds) },
+          })
+        : Promise.resolve([]),
+      orderIds.length
+        ? this.ordersRepository.find({ where: { orderId: In(orderIds) } })
+        : Promise.resolve([]),
+    ]);
+    const orderItemMap = new Map(orderItems.map((item) => [item.orderItemId, item]));
+    const orderMap = new Map(orders.map((order) => [order.orderId, order]));
+    const itemImageMap = await this.getOrderItemImageMap(orderItems);
+
+    const enriched = await Promise.all(
+      items.map(async (item) => {
+        const order = orderMap.get(item.orderId);
+        const returnWindow = order
+          ? await this.getOrderReturnWindow(order)
+          : {
+              returnWindowDays: RETURN_WINDOW_DAYS,
+              returnDeadline: null,
+              canCreateReturn: false,
+              returnBlockedReason: 'ORDER_NOT_FOUND',
+            };
+        const orderItem = orderItemMap.get(item.orderItemId);
+        return {
+          id: item.returnId,
+          returnId: item.returnId,
+          orderId: item.orderId,
+          orderItemId: item.orderItemId,
+          productId: orderItem?.productId ?? null,
+          productName: orderItem?.productName ?? null,
+          sku: orderItem?.sku ?? null,
+          colorName: orderItem?.colorName ?? null,
+          sizeName: orderItem?.sizeName ?? null,
+          imageUrl: itemImageMap.get(item.orderItemId) ?? null,
+          returnQuantity: item.returnQuantity,
+          reason: item.reason,
+          reasonLabel: this.getReturnReasonLabel(item.reason),
+          description: item.description,
+          status: item.returnStatus,
+          statusLabel: this.getReturnStatusLabel(item.returnStatus),
+          inspectionStatus: item.inspectionStatus,
+          inspectionStatusLabel: this.getReturnInspectionStatusLabel(item.inspectionStatus),
+          refundAmount: item.refundAmount,
+          maxRefundableAmount: item.maxRefundableAmount,
+          refundedQuantity: item.refundedQuantity,
+          returnWindowDays: returnWindow.returnWindowDays,
+          returnDeadline: returnWindow.returnDeadline,
+          canCreateReturn: returnWindow.canCreateReturn,
+          returnBlockedReason: returnWindow.returnBlockedReason,
+          createdAt: item.createdAt,
+          updatedAt: item.updatedAt,
+        };
+      }),
+    );
+    const fromTime = query.from ? new Date(query.from).getTime() : null;
+    const toTime = query.to ? new Date(query.to).getTime() : null;
+    const filtered = enriched.filter((item) => {
+      if (query.status && query.status !== 'all' && item.status !== query.status) return false;
+      const createdTime = new Date(item.createdAt).getTime();
+      if (fromTime && createdTime < fromTime) return false;
+      if (toTime && createdTime > toTime + 24 * 60 * 60 * 1000 - 1) return false;
+      if (normalizedSearch) {
+        const haystack = [
+          item.returnId,
+          item.id,
+          item.orderId,
+          item.productName,
+          item.sku,
+          item.colorName,
+          item.sizeName,
+          item.reason,
+          item.reasonLabel,
+          item.description,
+          item.statusLabel,
+        ].filter(Boolean).join(' ').toLowerCase();
+        if (!haystack.includes(normalizedSearch)) return false;
+      }
+      return true;
+    });
+    const total = filtered.length;
+    return {
+      items: filtered.slice((page - 1) * limit, page * limit),
+      meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    };
   }
 
   async findAllReturns() {
     const items = await this.returnsRepository.find({
       order: { createdAt: 'DESC' },
     });
+    const orderItemIds = [...new Set(items.map((i) => i.orderItemId))];
+    const orderItems = orderItemIds.length
+      ? await this.orderItemsRepository.find({
+          where: { orderItemId: In(orderItemIds) },
+        })
+      : [];
+    const orderItemMap = new Map(orderItems.map((i) => [i.orderItemId, i]));
+    const itemImageMap = await this.getOrderItemImageMap(orderItems);
 
     return items.map((item) => ({
+      returnId: item.returnId,
       id: item.returnId,
       orderId: item.orderId,
       userId: item.userId,
       orderItemId: item.orderItemId,
+      productName: orderItemMap.get(item.orderItemId)?.productName ?? null,
+      imageUrl: itemImageMap.get(item.orderItemId) ?? null,
+      sku: orderItemMap.get(item.orderItemId)?.sku ?? null,
+      colorName: orderItemMap.get(item.orderItemId)?.colorName ?? null,
+      sizeName: orderItemMap.get(item.orderItemId)?.sizeName ?? null,
+      orderedQuantity: orderItemMap.get(item.orderItemId)?.quantity ?? null,
+      deliveredQuantity: orderItemMap.get(item.orderItemId)
+        ? this.getDeliveredQuantityForReturn(orderItemMap.get(item.orderItemId)!)
+        : null,
+      returnQuantity: item.returnQuantity,
       reason: item.reason,
       description: item.description,
+      returnStatus: item.returnStatus,
       status: item.returnStatus,
+      inspectionStatus: item.inspectionStatus,
+      inspectionNote: item.inspectionNote,
+      inspectedBy: item.inspectedBy,
+      inspectedAt: item.inspectedAt,
       refundAmount: item.refundAmount,
+      maxRefundableAmount: item.maxRefundableAmount,
+      refundedQuantity: item.refundedQuantity,
       createdAt: item.createdAt,
       updatedAt: item.updatedAt,
     }));
@@ -2611,51 +3188,108 @@ export class OrdersService {
     }
 
     if (updateReturnStatusDto.status === ReturnStatus.RECEIVED) {
-      // RECEIVED: chỉ đánh dấu đã nhận, KHÔNG tự restock.
-      // Hàng phải qua inspection (admin gọi PATCH /returns/:id/inspect)
-      // để quyết định nhập kho / báo hỏng / trả NCC.
+      // RECEIVED: chá»‰ Ä‘Ã¡nh dáº¥u Ä‘Ã£ nháº­n, KHÃ”NG tá»± restock.
+      // HÃ ng pháº£i qua inspection (admin gá»i PATCH /returns/:id/inspect)
+      // Ä‘á»ƒ quyáº¿t Ä‘á»‹nh nháº­p kho / bÃ¡o há»ng / tráº£ NCC.
       returnRequest.inspectionStatus = ReturnInspectionStatus.PENDING;
     }
 
     returnRequest.returnStatus = updateReturnStatusDto.status;
     if (updateReturnStatusDto.status === ReturnStatus.REFUNDED) {
+      if (returnRequest.inspectionStatus === ReturnInspectionStatus.PENDING) {
+        throw new BadRequestException('RETURN_INSPECTION_REQUIRED');
+      }
+      const requestedRefund = Number(
+        updateReturnStatusDto.refundAmount ?? returnRequest.maxRefundableAmount,
+      );
+      const maxRefund = Number(returnRequest.maxRefundableAmount);
+      if (!Number.isFinite(requestedRefund) || requestedRefund <= 0) {
+        throw new BadRequestException('INVALID_REFUND_AMOUNT');
+      }
+      if (requestedRefund > maxRefund) {
+        throw new BadRequestException('REFUND_AMOUNT_EXCEEDS_MAX');
+      }
       returnRequest.refundAmount =
-        updateReturnStatusDto.refundAmount ?? orderItem.lineTotal;
+        updateReturnStatusDto.refundAmount ?? returnRequest.maxRefundableAmount;
+      returnRequest.refundedQuantity = returnRequest.returnQuantity;
       const order = await this.findAnyOrder(returnRequest.orderId);
-      order.orderStatus = OrderStatus.RETURNED;
-      order.paymentStatus =
-        order.paymentStatus === PaymentStatus.PAID
-          ? PaymentStatus.REFUNDED
-          : PaymentStatus.FAILED;
+      const existingRefund = await this.orderRefundsRepository.findOne({
+        where: {
+          returnId: returnRequest.returnId,
+          reason: OrderRefundReason.RETURN,
+        },
+      });
+      if (existingRefund) {
+        existingRefund.amount = requestedRefund.toFixed(2);
+        existingRefund.refundStatus = OrderRefundStatus.COMPLETED;
+        existingRefund.manualReference =
+          updateReturnStatusDto.note ?? existingRefund.manualReference;
+        existingRefund.note = updateReturnStatusDto.note ?? existingRefund.note;
+        existingRefund.updatedBy = currentUser._id;
+        await this.orderRefundsRepository.save(existingRefund);
+      } else {
+        await this.orderRefundsRepository.save(
+          this.orderRefundsRepository.create({
+            orderId: returnRequest.orderId,
+            returnId: returnRequest.returnId,
+            reason: OrderRefundReason.RETURN,
+            refundStatus: OrderRefundStatus.COMPLETED,
+            amount: requestedRefund.toFixed(2),
+            paymentProvider: order.paymentMethod,
+            manualReference: updateReturnStatusDto.note ?? null,
+            note: updateReturnStatusDto.note ?? 'Return refund completed',
+            createdBy: currentUser._id,
+            updatedBy: currentUser._id,
+          }),
+        );
+      }
+
+      const orderItems = await this.orderItemsRepository.find({
+        where: { orderId: order.orderId },
+      });
+      const allDeliveredQty = orderItems.reduce(
+        (sum, item) => sum + this.getDeliveredQuantityForReturn(item),
+        0,
+      );
+      const returnedQtyRows = await this.returnsRepository
+        .createQueryBuilder('r')
+        .select('COALESCE(SUM(r.return_quantity), 0)', 'quantity')
+        .where('r.order_id = :orderId', { orderId: order.orderId })
+        .andWhere('r.return_status = :status', {
+          status: ReturnStatus.REFUNDED,
+        })
+        .getRawOne<{ quantity: string }>();
+      const refundedQty =
+        Number(returnedQtyRows?.quantity ?? 0) + returnRequest.returnQuantity;
+      if (allDeliveredQty > 0 && refundedQty >= allDeliveredQty) {
+        order.orderStatus = OrderStatus.RETURNED;
+      }
+      await this.refreshOrderPaymentAfterRefund(order);
       await this.ordersRepository.save(order);
     }
 
     const savedReturn = await this.returnsRepository.save(returnRequest);
-    await this.notificationsService.createNotification({
+    await this.notificationsService.sendReturnStatusNotification({
       userId: savedReturn.userId,
-      title: 'Yeu cau tra hang da thay doi trang thai',
-      message: `Yeu cau tra hang ${savedReturn.returnId} da chuyen sang ${savedReturn.returnStatus}.`,
-      metadata: {
-        returnId: savedReturn.returnId,
-        status: savedReturn.returnStatus,
-        orderId: savedReturn.orderId,
-      },
+      orderId: savedReturn.orderId,
+      returnId: savedReturn.returnId,
+      status: savedReturn.returnStatus,
     });
 
     return savedReturn;
   }
 
   /**
-   * Admin xác nhận giao một phần (partial delivery).
-   * Khách mua 10 → giao thực tế 6 → các bước:
-   *   1. Cập nhật order_items.quantity_delivered cho từng line
-   *   2. Phần chưa giao (4 cái) → cộng lại quantityAvailable, giảm reserved
-   *   3. Tạo inventory_transaction RETURN_IN cho phần thiếu
-   *   4. Giảm reserved cho phần đã giao (như delivered bình thường)
-   *   5. Đặt status = PARTIAL_DELIVERED nếu còn thiếu, DELIVERED nếu đủ
-   *   6. Tính lại totalPayment theo phần đã giao thực tế
+   * Admin xÃ¡c nháº­n giao má»™t pháº§n (partial delivery).
+   * KhÃ¡ch mua 10 â†’ giao thá»±c táº¿ 6 â†’ cÃ¡c bÆ°á»›c:
+   *   1. Cáº­p nháº­t order_items.quantity_delivered cho tá»«ng line
+   *   2. Pháº§n chÆ°a giao (4 cÃ¡i) â†’ cá»™ng láº¡i quantityAvailable, giáº£m reserved
+   *   3. Táº¡o inventory_transaction RETURN_IN cho pháº§n thiáº¿u
+   *   4. Giáº£m reserved cho pháº§n Ä‘Ã£ giao (nhÆ° delivered bÃ¬nh thÆ°á»ng)
+   *   5. Äáº·t status = PARTIAL_DELIVERED náº¿u cÃ²n thiáº¿u, DELIVERED náº¿u Ä‘á»§
+   *   6. TÃ­nh láº¡i totalPayment theo pháº§n Ä‘Ã£ giao thá»±c táº¿
    *
-   * Phải gọi từ status SHIPPING (chỉ giao được khi đang ship).
+   * Pháº£i gá»i tá»« status SHIPPING (chá»‰ giao Ä‘Æ°á»£c khi Ä‘ang ship).
    */
   async partialDeliverOrder(
     currentUser: IUser,
@@ -2668,7 +3302,7 @@ export class OrdersService {
 
     if (order.orderStatus !== OrderStatus.SHIPPING) {
       throw new BadRequestException(
-        'Partial delivery chỉ thực hiện khi đơn đang SHIPPING',
+        'Partial delivery chá»‰ thá»±c hiá»‡n khi Ä‘Æ¡n Ä‘ang SHIPPING',
       );
     }
 
@@ -2677,21 +3311,21 @@ export class OrdersService {
     });
     const itemMap = new Map(orderItems.map((it) => [it.orderItemId, it]));
 
-    // Validate: deliveredQty không được vượt qty đặt
+    // Validate: deliveredQty khÃ´ng Ä‘Æ°á»£c vÆ°á»£t qty Ä‘áº·t
     for (const dto of items) {
       const oi = itemMap.get(dto.orderItemId);
       if (!oi) {
         throw new BadRequestException(
-          `Order item ${dto.orderItemId} không thuộc đơn này`,
+          `Order item ${dto.orderItemId} khÃ´ng thuá»™c Ä‘Æ¡n nÃ y`,
         );
       }
       if (dto.deliveredQty > oi.quantity) {
         throw new BadRequestException(
-          `Số lượng giao (${dto.deliveredQty}) không thể vượt số đặt (${oi.quantity}) của ${oi.productName}`,
+          `Sá»‘ lÆ°á»£ng giao (${dto.deliveredQty}) khÃ´ng thá»ƒ vÆ°á»£t sá»‘ Ä‘áº·t (${oi.quantity}) cá»§a ${oi.productName}`,
         );
       }
       if (dto.deliveredQty < 0) {
-        throw new BadRequestException('deliveredQty không được âm');
+        throw new BadRequestException('deliveredQty khÃ´ng Ä‘Æ°á»£c Ã¢m');
       }
     }
 
@@ -2711,8 +3345,8 @@ export class OrdersService {
           oi.quantityDelivered = dto.deliveredQty;
           await em.save(OrderItemEntity, oi);
 
-          // Phần đã giao: giảm reserved (hàng đã rời kho thật)
-          // Phần KHÔNG giao: cộng lại quantityAvailable + giảm reserved
+          // Pháº§n Ä‘Ã£ giao: giáº£m reserved (hÃ ng Ä‘Ã£ rá»i kho tháº­t)
+          // Pháº§n KHÃ”NG giao: cá»™ng láº¡i quantityAvailable + giáº£m reserved
           if (oi.quantity > 0) {
             const product = await em.findOne(ProductEntity, {
               where: { productId: oi.productId },
@@ -2720,12 +3354,12 @@ export class OrdersService {
             });
             if (!product) continue;
 
-            const releaseReserved = oi.quantity; // toàn bộ qty của line
+            const releaseReserved = oi.quantity; // toÃ n bá»™ qty cá»§a line
             product.quantityReserved = Math.max(
               0,
               (product.quantityReserved ?? 0) - releaseReserved,
             );
-            // Cộng lại phần thiếu vào available
+            // Cá»™ng láº¡i pháº§n thiáº¿u vÃ o available
             if (undeliveredQty > 0) {
               const qtyBefore = product.quantityAvailable;
               product.quantityAvailable += undeliveredQty;
@@ -2758,13 +3392,13 @@ export class OrdersService {
           }
         }
 
-        // Cập nhật order: status + total
+        // Cáº­p nháº­t order: status + total
         const isFullyDelivered = totalDeliveredQty === totalOrderedQty;
         order.orderStatus = isFullyDelivered
           ? OrderStatus.DELIVERED
           : OrderStatus.PARTIAL_DELIVERED;
         order.totalQuantity = totalDeliveredQty;
-        // Recalc totalPayment = subtotal mới - discount + delivery
+        // Recalc totalPayment = subtotal má»›i - discount + delivery
         const newTotalPayment =
           newSubtotal -
           Number(order.discountAmount) +
@@ -2772,7 +3406,7 @@ export class OrdersService {
         order.subtotalAmount = newSubtotal.toFixed(2);
         order.totalPayment = Math.max(0, newTotalPayment).toFixed(2);
 
-        // COD: chỉ PAID nếu giao đủ
+        // COD: chá»‰ PAID náº¿u giao Ä‘á»§
         if (
           isFullyDelivered &&
           order.paymentMethod === PaymentMethod.COD
@@ -2806,12 +3440,12 @@ export class OrdersService {
   }
 
   /**
-   * Admin kiểm tra hàng trả về và quyết định:
-   *   USABLE             → nhập lại kho chính
-   *   DAMAGED            → ghi DAMAGE adjustment, KHÔNG nhập kho (loss)
-   *   RETURN_TO_SUPPLIER → đánh dấu để admin tạo Supplier Return riêng
+   * Admin kiá»ƒm tra hÃ ng tráº£ vá» vÃ  quyáº¿t Ä‘á»‹nh:
+   *   USABLE             â†’ nháº­p láº¡i kho chÃ­nh
+   *   DAMAGED            â†’ ghi DAMAGE adjustment, KHÃ”NG nháº­p kho (loss)
+   *   RETURN_TO_SUPPLIER â†’ Ä‘Ã¡nh dáº¥u Ä‘á»ƒ admin táº¡o Supplier Return riÃªng
    *
-   * Chỉ chạy được khi return đã RECEIVED + inspectionStatus = PENDING.
+   * Chá»‰ cháº¡y Ä‘Æ°á»£c khi return Ä‘Ã£ RECEIVED + inspectionStatus = PENDING.
    */
   async inspectReturn(
     currentUser: IUser,
@@ -2821,7 +3455,7 @@ export class OrdersService {
   ) {
     await this.ensureUserExists(currentUser._id);
     if (decision === ReturnInspectionStatus.PENDING) {
-      throw new BadRequestException('Decision không thể là PENDING');
+      throw new BadRequestException('Decision khÃ´ng thá»ƒ lÃ  PENDING');
     }
 
     const returnRequest = await this.returnsRepository.findOneBy({ returnId });
@@ -2830,12 +3464,12 @@ export class OrdersService {
     }
     if (returnRequest.returnStatus !== ReturnStatus.RECEIVED) {
       throw new BadRequestException(
-        'Chỉ có thể inspect return đã RECEIVED',
+        'Chá»‰ cÃ³ thá»ƒ inspect return Ä‘Ã£ RECEIVED',
       );
     }
     if (returnRequest.inspectionStatus !== ReturnInspectionStatus.PENDING) {
       throw new BadRequestException(
-        `Return này đã được inspect (${returnRequest.inspectionStatus})`,
+        `Return nÃ y Ä‘Ã£ Ä‘Æ°á»£c inspect (${returnRequest.inspectionStatus})`,
       );
     }
 
@@ -2851,10 +3485,22 @@ export class OrdersService {
       });
 
       if (decision === ReturnInspectionStatus.USABLE && product) {
-        // Nhập lại kho chính
+        // Nháº­p láº¡i kho chÃ­nh
+        const returnQty = returnRequest.returnQuantity;
         const qtyBefore = product.quantityAvailable;
-        product.quantityAvailable += orderItem.quantity;
+        product.quantityAvailable += returnQty;
         await em.save(ProductEntity, product);
+
+        if (orderItem.variantId) {
+          const variant = await em.findOne(ProductVariantEntity, {
+            where: { variantId: orderItem.variantId },
+            lock: { mode: 'pessimistic_write' },
+          });
+          if (variant) {
+            variant.stockQuantity += returnQty;
+            await em.save(ProductVariantEntity, variant);
+          }
+        }
 
         await em.save(
           InventoryTransactionEntity,
@@ -2862,41 +3508,41 @@ export class OrdersService {
             productId: product.productId,
             performedBy: currentUser._id,
             transactionType: InventoryTransactionType.RETURN_IN,
-            quantityChange: orderItem.quantity,
+            quantityChange: returnQty,
             quantityBefore: qtyBefore,
             quantityAfter: product.quantityAvailable,
             referenceType: 'RETURN',
             referenceId: String(returnRequest.returnId),
             unitCostAtTime: product.avgCost ?? null,
-            note: note ?? 'Return inspection: USABLE — restocked',
+            note: note ?? 'Return inspection: USABLE â€” restocked',
             relatedOrderId: returnRequest.orderId,
           }),
         );
         await this.syncDefaultWarehouseStock(
           em,
           product.productId,
-          orderItem.quantity,
+          returnQty,
         );
       } else if (decision === ReturnInspectionStatus.DAMAGED && product) {
-        // Hỏng — KHÔNG nhập kho. Ghi DAMAGE inventory_transaction (loss).
+        // Há»ng â€” KHÃ”NG nháº­p kho. Ghi DAMAGE inventory_transaction (loss).
         await em.save(
           InventoryTransactionEntity,
           em.create(InventoryTransactionEntity, {
             productId: product.productId,
             performedBy: currentUser._id,
             transactionType: InventoryTransactionType.DAMAGE,
-            quantityChange: 0, // không thay đổi tồn (vì chưa nhập)
+            quantityChange: 0, // khÃ´ng thay Ä‘á»•i tá»“n (vÃ¬ chÆ°a nháº­p)
             quantityBefore: product.quantityAvailable,
             quantityAfter: product.quantityAvailable,
             referenceType: 'RETURN',
             referenceId: String(returnRequest.returnId),
             unitCostAtTime: product.avgCost ?? null,
-            note: note ?? `Return inspection: DAMAGED — written off ${orderItem.quantity} unit(s)`,
+            note: note ?? `Return inspection: DAMAGED â€” written off ${orderItem.quantity} unit(s)`,
             relatedOrderId: returnRequest.orderId,
           }),
         );
       }
-      // RETURN_TO_SUPPLIER: không động vào kho. Admin sẽ tạo Supplier Return riêng.
+      // RETURN_TO_SUPPLIER: khÃ´ng Ä‘á»™ng vÃ o kho. Admin sáº½ táº¡o Supplier Return riÃªng.
 
       returnRequest.inspectionStatus = decision;
       returnRequest.inspectionNote = note ?? null;
@@ -2910,20 +3556,20 @@ export class OrdersService {
   }
 
   /**
-   * Admin xác nhận thanh toán thủ công cho đơn non-COD (BANK_TRANSFER, online chưa tự ghi nhận).
+   * Admin xÃ¡c nháº­n thanh toÃ¡n thá»§ cÃ´ng cho Ä‘Æ¡n non-COD (BANK_TRANSFER, online chÆ°a tá»± ghi nháº­n).
    */
   async confirmPayment(currentUser: IUser, orderId: string) {
     await this.ensureUserExists(currentUser._id);
     const order = await this.findAnyOrder(orderId);
 
     if (order.paymentStatus === PaymentStatus.PAID) {
-      throw new BadRequestException('Đơn hàng đã được thanh toán');
+      throw new BadRequestException('ÄÆ¡n hÃ ng Ä‘Ã£ Ä‘Æ°á»£c thanh toÃ¡n');
     }
     if (order.paymentMethod === PaymentMethod.COD) {
-      throw new BadRequestException('COD tự động ghi nhận khi giao — không cần xác nhận thủ công');
+      throw new BadRequestException('COD tá»± Ä‘á»™ng ghi nháº­n khi giao â€” khÃ´ng cáº§n xÃ¡c nháº­n thá»§ cÃ´ng');
     }
     if (order.paymentMethod === PaymentMethod.CREDIT) {
-      throw new BadRequestException('Đơn hàng mua nợ — công nợ được quản lý riêng qua hạn mức tín dụng');
+      throw new BadRequestException('ÄÆ¡n hÃ ng mua ná»£ â€” cÃ´ng ná»£ Ä‘Æ°á»£c quáº£n lÃ½ riÃªng qua háº¡n má»©c tÃ­n dá»¥ng');
     }
 
     order.paymentStatus = PaymentStatus.PAID;
@@ -2938,7 +3584,7 @@ export class OrdersService {
       paymentStatus: PaymentStatus.PAID,
       amount: order.totalPayment,
       gatewayCode: 'MANUAL',
-      gatewayMessage: `Xác nhận thủ công bởi admin ${currentUser._id}`,
+      gatewayMessage: `XÃ¡c nháº­n thá»§ cÃ´ng bá»Ÿi admin ${currentUser._id}`,
       rawPayload: { confirmedBy: currentUser._id, confirmedAt: new Date().toISOString() },
     });
     await this.paymentTransactionsRepository.save(tx);
@@ -2954,15 +3600,15 @@ export class OrdersService {
   }
 
   /**
-   * Khách hàng xác nhận đã nhận hàng (khi đơn đang SHIPPING).
-   * Chuyển → DELIVERED + giải phóng reserved + COD tự PAID.
+   * KhÃ¡ch hÃ ng xÃ¡c nháº­n Ä‘Ã£ nháº­n hÃ ng (khi Ä‘Æ¡n Ä‘ang SHIPPING).
+   * Chuyá»ƒn â†’ DELIVERED + giáº£i phÃ³ng reserved + COD tá»± PAID.
    */
   async confirmReceivedByCustomer(currentUser: IUser, orderId: string) {
     await this.ensureUserExists(currentUser._id);
     const order = await this.findOrderDetail(currentUser, orderId);
 
     if (order.status !== OrderStatus.SHIPPING) {
-      throw new BadRequestException('Chỉ có thể xác nhận nhận hàng khi đơn đang được giao');
+      throw new BadRequestException('Chá»‰ cÃ³ thá»ƒ xÃ¡c nháº­n nháº­n hÃ ng khi Ä‘Æ¡n Ä‘ang Ä‘Æ°á»£c giao');
     }
 
     await this.ordersRepository.manager.transaction(async (em) => {
@@ -3010,3 +3656,4 @@ export class OrdersService {
     return this.buildOrderDetail(updated);
   }
 }
+

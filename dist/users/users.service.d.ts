@@ -3,7 +3,7 @@ import { ShoppingCartEntity } from '../carts/entities/shopping-cart.entity';
 import { ContactEntity } from '../contacts/entities/contact.entity';
 import { NotificationEntity } from '../notifications/entities/notification.entity';
 import { OrderItemEntity } from '../orders/entities/order-item.entity';
-import { OrderEntity } from '../orders/entities/order.entity';
+import { OrderEntity, OrderStatus, PaymentMethod, PaymentStatus } from '../orders/entities/order.entity';
 import { PaymentTransactionEntity } from '../orders/entities/payment-transaction.entity';
 import { ReturnEntity } from '../orders/entities/return.entity';
 import { ShippingAddressEntity } from '../orders/entities/shipping-address.entity';
@@ -169,12 +169,17 @@ export declare class UsersService {
         page: number;
         limit: number;
         status?: string;
+        paymentStatus?: string;
+        paymentMethod?: string;
+        search?: string;
+        from?: string;
+        to?: string;
     }): Promise<{
         items: {
             id: string;
-            status: import("../orders/entities/order.entity").OrderStatus;
-            paymentMethod: import("../orders/entities/order.entity").PaymentMethod;
-            paymentStatus: import("../orders/entities/order.entity").PaymentStatus;
+            status: OrderStatus;
+            paymentMethod: PaymentMethod;
+            paymentStatus: PaymentStatus;
             totalPayment: string;
             totalQuantity: number;
             createdAt: Date;
@@ -198,15 +203,19 @@ export declare class UsersService {
         items: {
             id: string;
             productId: string;
+            variantId: string | null;
             productName: string;
+            sku: string | null;
+            colorName: string | null;
+            sizeName: string | null;
             quantity: number;
             unitPrice: string;
             lineTotal: string;
         }[];
         id: string;
-        status: import("../orders/entities/order.entity").OrderStatus;
-        paymentMethod: import("../orders/entities/order.entity").PaymentMethod;
-        paymentStatus: import("../orders/entities/order.entity").PaymentStatus;
+        status: OrderStatus;
+        paymentMethod: PaymentMethod;
+        paymentStatus: PaymentStatus;
         totalPayment: string;
         totalQuantity: number;
         createdAt: Date;

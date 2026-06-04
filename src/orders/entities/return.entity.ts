@@ -44,6 +44,9 @@ export class ReturnEntity {
   @Column({ name: 'order_item_id', type: 'bigint', unsigned: true })
   orderItemId: string;
 
+  @Column({ name: 'return_quantity', type: 'int', default: 1 })
+  returnQuantity: number;
+
   @Column({ name: 'user_id', type: 'char', length: 36 })
   userId: string;
 
@@ -69,6 +72,18 @@ export class ReturnEntity {
     nullable: true,
   })
   refundAmount: string | null;
+
+  @Column({
+    name: 'max_refundable_amount',
+    type: 'decimal',
+    precision: 15,
+    scale: 2,
+    default: '0.00',
+  })
+  maxRefundableAmount: string;
+
+  @Column({ name: 'refunded_quantity', type: 'int', default: 0 })
+  refundedQuantity: number;
 
   @Column({
     name: 'inspection_status',

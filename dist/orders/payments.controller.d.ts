@@ -1,6 +1,8 @@
 import type { IUser } from '../users/users.interface';
+import { CreateCancelPaidRefundDto } from './dto/create-cancel-paid-refund.dto';
 import { InitiatePaymentDto } from './dto/initiate-payment.dto';
 import { PaymentCallbackDto } from './dto/payment-callback.dto';
+import { UpdateRefundStatusDto } from './dto/update-refund-status.dto';
 import { OrdersService } from './orders.service';
 export declare class PaymentsController {
     private readonly ordersService;
@@ -109,4 +111,36 @@ export declare class PaymentsController {
             } | null;
         }[];
     }>;
+    getRefunds(page?: string, limit?: string, status?: string, reason?: string, orderId?: string): Promise<{
+        meta: {
+            page: number;
+            limit: number;
+            total: number;
+            totalPages: number;
+        };
+        items: {
+            refundId: string;
+            orderId: string;
+            returnId: string | null;
+            reason: import("./entities/order-refund.entity").OrderRefundReason;
+            refundStatus: import("./entities/order-refund.entity").OrderRefundStatus;
+            amount: string;
+            paymentProvider: string | null;
+            manualReference: string | null;
+            note: string | null;
+            createdBy: string | null;
+            updatedBy: string | null;
+            createdAt: Date;
+            updatedAt: Date;
+            order: {
+                status: import("./entities/order.entity").OrderStatus;
+                paymentStatus: import("./entities/order.entity").PaymentStatus;
+                totalPayment: string;
+                fullName: string;
+                phone: string;
+            } | null;
+        }[];
+    }>;
+    createCancelPaidOrderRefund(currentUser: IUser, dto: CreateCancelPaidRefundDto): Promise<import("./entities/order-refund.entity").OrderRefundEntity>;
+    updateRefundStatus(currentUser: IUser, refundId: string, dto: UpdateRefundStatusDto): Promise<import("./entities/order-refund.entity").OrderRefundEntity | null>;
 }

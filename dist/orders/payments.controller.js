@@ -15,8 +15,10 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.PaymentsController = void 0;
 const common_1 = require("@nestjs/common");
 const customize_1 = require("../decorator/customize");
+const create_cancel_paid_refund_dto_1 = require("./dto/create-cancel-paid-refund.dto");
 const initiate_payment_dto_1 = require("./dto/initiate-payment.dto");
 const payment_callback_dto_1 = require("./dto/payment-callback.dto");
+const update_refund_status_dto_1 = require("./dto/update-refund-status.dto");
 const orders_service_1 = require("./orders.service");
 let PaymentsController = class PaymentsController {
     ordersService;
@@ -51,6 +53,21 @@ let PaymentsController = class PaymentsController {
             provider,
             status,
         });
+    }
+    getRefunds(page = '1', limit = '20', status, reason, orderId) {
+        return this.ordersService.findAllRefunds({
+            page: Math.max(1, parseInt(page, 10) || 1),
+            limit: Math.min(100, Math.max(1, parseInt(limit, 10) || 20)),
+            status,
+            reason,
+            orderId,
+        });
+    }
+    createCancelPaidOrderRefund(currentUser, dto) {
+        return this.ordersService.createCancelPaidOrderRefund(currentUser, dto);
+    }
+    updateRefundStatus(currentUser, refundId, dto) {
+        return this.ordersService.updateRefundStatus(currentUser, refundId, dto);
     }
 };
 exports.PaymentsController = PaymentsController;
@@ -132,6 +149,40 @@ __decorate([
     __metadata("design:paramtypes", [Object, Object, String, String]),
     __metadata("design:returntype", void 0)
 ], PaymentsController.prototype, "getAllTransactions", null);
+__decorate([
+    (0, customize_1.RequirePermissions)('manage_payments'),
+    (0, common_1.Get)('admin/refunds'),
+    (0, customize_1.ResponseMessage)('Get refund queue'),
+    __param(0, (0, common_1.Query)('page')),
+    __param(1, (0, common_1.Query)('limit')),
+    __param(2, (0, common_1.Query)('status')),
+    __param(3, (0, common_1.Query)('reason')),
+    __param(4, (0, common_1.Query)('orderId')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Object, String, String, String]),
+    __metadata("design:returntype", void 0)
+], PaymentsController.prototype, "getRefunds", null);
+__decorate([
+    (0, customize_1.RequirePermissions)('manage_payments'),
+    (0, common_1.Post)('admin/refunds/cancel-paid-order'),
+    (0, customize_1.ResponseMessage)('Create paid order cancellation refund'),
+    __param(0, (0, customize_1.User)()),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, create_cancel_paid_refund_dto_1.CreateCancelPaidRefundDto]),
+    __metadata("design:returntype", void 0)
+], PaymentsController.prototype, "createCancelPaidOrderRefund", null);
+__decorate([
+    (0, customize_1.RequirePermissions)('manage_payments'),
+    (0, common_1.Patch)('admin/refunds/:refundId/status'),
+    (0, customize_1.ResponseMessage)('Update refund status'),
+    __param(0, (0, customize_1.User)()),
+    __param(1, (0, common_1.Param)('refundId')),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, update_refund_status_dto_1.UpdateRefundStatusDto]),
+    __metadata("design:returntype", void 0)
+], PaymentsController.prototype, "updateRefundStatus", null);
 exports.PaymentsController = PaymentsController = __decorate([
     (0, common_1.Controller)('payments'),
     __metadata("design:paramtypes", [orders_service_1.OrdersService])

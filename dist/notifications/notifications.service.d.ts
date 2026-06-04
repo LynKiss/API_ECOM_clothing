@@ -278,6 +278,38 @@ export declare class NotificationsService {
         createdAt: null;
         updatedAt: null;
     }] | null>;
+    sendReturnStatusNotification(input: {
+        userId: string;
+        orderId: string;
+        returnId: string;
+        status: string;
+    }): Promise<{
+        id: string;
+        userId: string | null;
+        email: string | null;
+        channel: NotificationChannel;
+        status: NotificationStatus;
+        title: string;
+        message: string;
+        metadata: Record<string, unknown> | null;
+        deliveryError: string | null;
+        sentAt: Date | null;
+        createdAt: Date;
+        updatedAt: Date;
+    } | {
+        id: null;
+        userId: string | null;
+        email: string | null;
+        channel: NotificationChannel;
+        status: NotificationStatus;
+        title: string;
+        message: string;
+        metadata: Record<string, unknown> | null;
+        deliveryError: string;
+        sentAt: null;
+        createdAt: null;
+        updatedAt: null;
+    }>;
     private dispatchNotification;
     private toResponse;
     private toFallbackResponse;

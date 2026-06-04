@@ -28,9 +28,16 @@ describe('UsersService', () => {
   let service: UsersService;
   let usersRepository: MockRepository;
   let refreshTokensRepository: MockRepository;
+  let contactsRepository: MockRepository;
+  let shoppingCartsRepository: MockRepository;
+  let cartItemsRepository: MockRepository;
+  let wishlistRepository: MockRepository;
+  let notificationsRepository: MockRepository;
   let shippingAddressesRepository: MockRepository;
   let ordersRepository: MockRepository;
   let orderItemsRepository: MockRepository;
+  let returnsRepository: MockRepository;
+  let paymentTransactionsRepository: MockRepository;
 
   const now = new Date('2026-04-19T08:00:00.000Z');
   const user: UserEntity = {
@@ -52,16 +59,30 @@ describe('UsersService', () => {
   beforeEach(() => {
     usersRepository = createRepositoryMock();
     refreshTokensRepository = createRepositoryMock();
+    contactsRepository = createRepositoryMock();
+    shoppingCartsRepository = createRepositoryMock();
+    cartItemsRepository = createRepositoryMock();
+    wishlistRepository = createRepositoryMock();
+    notificationsRepository = createRepositoryMock();
     shippingAddressesRepository = createRepositoryMock();
     ordersRepository = createRepositoryMock();
     orderItemsRepository = createRepositoryMock();
+    returnsRepository = createRepositoryMock();
+    paymentTransactionsRepository = createRepositoryMock();
 
     service = new UsersService(
       usersRepository as never,
       refreshTokensRepository as never,
+      contactsRepository as never,
+      shoppingCartsRepository as never,
+      cartItemsRepository as never,
+      wishlistRepository as never,
+      notificationsRepository as never,
       shippingAddressesRepository as never,
       ordersRepository as never,
       orderItemsRepository as never,
+      returnsRepository as never,
+      paymentTransactionsRepository as never,
     );
   });
 

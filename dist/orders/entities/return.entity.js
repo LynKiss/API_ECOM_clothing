@@ -31,11 +31,14 @@ let ReturnEntity = class ReturnEntity {
     returnId;
     orderId;
     orderItemId;
+    returnQuantity;
     userId;
     reason;
     description;
     returnStatus;
     refundAmount;
+    maxRefundableAmount;
+    refundedQuantity;
     inspectionStatus;
     inspectionNote;
     inspectedBy;
@@ -60,6 +63,10 @@ __decorate([
     (0, typeorm_1.Column)({ name: 'order_item_id', type: 'bigint', unsigned: true }),
     __metadata("design:type", String)
 ], ReturnEntity.prototype, "orderItemId", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ name: 'return_quantity', type: 'int', default: 1 }),
+    __metadata("design:type", Number)
+], ReturnEntity.prototype, "returnQuantity", void 0);
 __decorate([
     (0, typeorm_1.Column)({ name: 'user_id', type: 'char', length: 36 }),
     __metadata("design:type", String)
@@ -91,6 +98,20 @@ __decorate([
     }),
     __metadata("design:type", Object)
 ], ReturnEntity.prototype, "refundAmount", void 0);
+__decorate([
+    (0, typeorm_1.Column)({
+        name: 'max_refundable_amount',
+        type: 'decimal',
+        precision: 15,
+        scale: 2,
+        default: '0.00',
+    }),
+    __metadata("design:type", String)
+], ReturnEntity.prototype, "maxRefundableAmount", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ name: 'refunded_quantity', type: 'int', default: 0 }),
+    __metadata("design:type", Number)
+], ReturnEntity.prototype, "refundedQuantity", void 0);
 __decorate([
     (0, typeorm_1.Column)({
         name: 'inspection_status',

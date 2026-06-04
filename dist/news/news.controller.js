@@ -65,6 +65,14 @@ let NewsController = class NewsController {
     unlikeArticle(id) {
         return this.newsService.unlikeArticle(id);
     }
+    getMyComments(currentUser, page = '1', limit = '12', status, search) {
+        return this.newsService.findMyComments(currentUser._id, {
+            page: Math.max(1, parseInt(page, 10) || 1),
+            limit: Math.min(100, Math.max(1, parseInt(limit, 10) || 12)),
+            status,
+            search,
+        });
+    }
     getComments(id) {
         return this.newsService.getNewsComments(id);
     }
@@ -220,6 +228,18 @@ __decorate([
     __metadata("design:paramtypes", [String]),
     __metadata("design:returntype", void 0)
 ], NewsController.prototype, "unlikeArticle", null);
+__decorate([
+    (0, common_1.Get)('public/comments/me'),
+    (0, customize_1.ResponseMessage)('Get my news comments'),
+    __param(0, (0, customize_1.User)()),
+    __param(1, (0, common_1.Query)('page')),
+    __param(2, (0, common_1.Query)('limit')),
+    __param(3, (0, common_1.Query)('status')),
+    __param(4, (0, common_1.Query)('search')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Object, Object, String, String]),
+    __metadata("design:returntype", void 0)
+], NewsController.prototype, "getMyComments", null);
 __decorate([
     (0, common_1.Get)('public/:id/comments'),
     (0, customize_1.Public)(),

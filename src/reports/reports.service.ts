@@ -8,6 +8,10 @@ import { CouponUsageEntity } from '../discounts/entities/coupon-usage.entity';
 import { DiscountEntity } from '../discounts/entities/discount.entity';
 import { OrderItemEntity } from '../orders/entities/order-item.entity';
 import {
+  OrderRefundEntity,
+  OrderRefundStatus,
+} from '../orders/entities/order-refund.entity';
+import {
   OrderEntity,
   OrderStatus,
   PaymentStatus,
@@ -28,6 +32,8 @@ export class ReportsService {
     private readonly ordersRepository: Repository<OrderEntity>,
     @InjectRepository(OrderItemEntity)
     private readonly orderItemsRepository: Repository<OrderItemEntity>,
+    @InjectRepository(OrderRefundEntity)
+    private readonly orderRefundsRepository: Repository<OrderRefundEntity>,
     @InjectRepository(ProductEntity)
     private readonly productsRepository: Repository<ProductEntity>,
     @InjectRepository(UserEntity)
@@ -53,9 +59,6 @@ export class ReportsService {
 
   async getDashboard() {
     const revenueStatuses = [
-      OrderStatus.CONFIRMED,
-      OrderStatus.PROCESSING,
-      OrderStatus.SHIPPING,
       OrderStatus.DELIVERED,
       OrderStatus.PARTIAL_DELIVERED,
     ];
@@ -95,6 +98,20 @@ export class ReportsService {
       return qb.getRawOne<{ revenue: string }>();
     };
 
+    const refundQuery = (from?: Date, to?: Date) => {
+      const qb = this.orderRefundsRepository
+        .createQueryBuilder('refund')
+        .select('COALESCE(SUM(refund.amount), 0)', 'amount')
+        .where('refund.refund_status = :status', {
+          status: OrderRefundStatus.COMPLETED,
+        });
+
+      if (from) qb.andWhere('refund.updated_at >= :from', { from });
+      if (to) qb.andWhere('refund.updated_at < :to', { to });
+
+      return qb.getRawOne<{ amount: string }>();
+    };
+
     const [
       totalUsers,
       totalCustomers,
@@ -107,11 +124,16 @@ export class ReportsService {
       deliveredOrders,
       paidOrders,
       revenueRow,
+      refundRow,
       todayOrders,
       todayRevenueRow,
+      todayRefundRow,
       yesterdayRevenueRow,
+      yesterdayRefundRow,
       last7RevenueRow,
+      last7RefundRow,
       last30RevenueRow,
+      last30RefundRow,
       lowStockProducts,
       outOfStockProducts,
       expiredSoonProducts,
@@ -143,14 +165,19 @@ export class ReportsService {
         where: { paymentStatus: PaymentStatus.PAID },
       }),
       revenueQuery(),
+      refundQuery(),
       this.ordersRepository
         .createQueryBuilder('order')
         .where('order.created_at >= :todayStart', { todayStart })
         .getCount(),
       revenueQuery(todayStart),
+      refundQuery(todayStart),
       revenueQuery(yesterdayStart, todayStart),
+      refundQuery(yesterdayStart, todayStart),
       revenueQuery(last7DaysStart),
+      refundQuery(last7DaysStart),
       revenueQuery(last30DaysStart),
+      refundQuery(last30DaysStart),
       this.productsRepository.count({
         where: { quantityAvailable: LessThanOrEqual(10) },
       }),
@@ -502,9 +529,28 @@ export class ReportsService {
       take: 8,
     });
 
-    const totalRevenue = Number(revenueRow?.revenue ?? 0);
-    const todayRevenue = Number(todayRevenueRow?.revenue ?? 0);
-    const yesterdayRevenue = Number(yesterdayRevenueRow?.revenue ?? 0);
+    const totalRevenue = Math.max(
+      0,
+      Number(revenueRow?.revenue ?? 0) - Number(refundRow?.amount ?? 0),
+    );
+    const todayRevenue = Math.max(
+      0,
+      Number(todayRevenueRow?.revenue ?? 0) - Number(todayRefundRow?.amount ?? 0),
+    );
+    const yesterdayRevenue = Math.max(
+      0,
+      Number(yesterdayRevenueRow?.revenue ?? 0) -
+        Number(yesterdayRefundRow?.amount ?? 0),
+    );
+    const last7Revenue = Math.max(
+      0,
+      Number(last7RevenueRow?.revenue ?? 0) - Number(last7RefundRow?.amount ?? 0),
+    );
+    const last30Revenue = Math.max(
+      0,
+      Number(last30RevenueRow?.revenue ?? 0) -
+        Number(last30RefundRow?.amount ?? 0),
+    );
 
     return {
       refreshedAt: now.toISOString(),
@@ -533,8 +579,8 @@ export class ReportsService {
             : todayRevenue > 0
               ? 100
               : 0,
-        last7Revenue: Number(last7RevenueRow?.revenue ?? 0).toFixed(2),
-        last30Revenue: Number(last30RevenueRow?.revenue ?? 0).toFixed(2),
+        last7Revenue: last7Revenue.toFixed(2),
+        last30Revenue: last30Revenue.toFixed(2),
         averageOrderValue:
           totalOrders > 0 ? (totalRevenue / totalOrders).toFixed(2) : '0.00',
         lowStockProducts,
@@ -549,6 +595,11 @@ export class ReportsService {
         visibleReviews,
         averageRating: Number(avgReviewRow?.averageRating ?? 0).toFixed(2),
         totalDiagnoses,
+      },
+      meta: {
+        revenuePolicy:
+          'Doanh thu tài chính chỉ tính đơn đã giao/đã giao một phần và trừ refund completed.',
+        refundPolicy: 'Chỉ order_refunds.refund_status = completed mới trừ doanh thu.',
       },
       topProducts,
       inventorySummary,
@@ -871,10 +922,8 @@ export class ReportsService {
     const { groupBy = 'product' } = query;
 
     const completedStatuses = [
-      OrderStatus.CONFIRMED,
-      OrderStatus.PROCESSING,
-      OrderStatus.SHIPPING,
       OrderStatus.DELIVERED,
+      OrderStatus.PARTIAL_DELIVERED,
     ];
 
     const qb = this.orderItemsRepository
@@ -980,7 +1029,31 @@ export class ReportsService {
         };
       });
 
-      return { items, meta: { page, limit, total, totalPages: Math.ceil(total / limit) } };
+      const unallocatedRefundRow = await this.orderRefundsRepository
+        .createQueryBuilder('refund')
+        .select('COALESCE(SUM(refund.amount), 0)', 'amount')
+        .where('refund.refund_status = :status', {
+          status: OrderRefundStatus.COMPLETED,
+        })
+        .andWhere('refund.return_id IS NULL')
+        .getRawOne<{ amount: string }>();
+
+      return {
+        items,
+        meta: {
+          page,
+          limit,
+          total,
+          totalPages: Math.ceil(total / limit),
+          revenuePolicy:
+            'Chỉ tính đơn đã giao/đã giao một phần; refund completed được ghi nhận qua ledger.',
+          refundPolicy:
+            'Refund có returnId dùng để đối chiếu dòng hàng; refund không gắn dòng được báo ở unallocatedRefund.',
+          cogsPolicy:
+            'COGS ưu tiên inventory transaction EXPORT, fallback avgCost/costPrice khi thiếu unit cost.',
+          unallocatedRefund: Number(unallocatedRefundRow?.amount ?? 0),
+        },
+      };
     }
 
     // Nhóm theo ngày hoặc tháng
@@ -993,7 +1066,17 @@ export class ReportsService {
       .orderBy('period', 'ASC');
 
     const rows = await qb.getRawMany<{ period: string; revenue: string; soldQty: string }>();
-    return { items: rows.map((r) => ({ ...r, revenue: Number(r.revenue), soldQty: Number(r.soldQty) })) };
+    return {
+      items: rows.map((r) => ({
+        ...r,
+        revenue: Number(r.revenue),
+        soldQty: Number(r.soldQty),
+      })),
+      meta: {
+        revenuePolicy: 'Chỉ tính đơn đã giao/đã giao một phần.',
+        refundPolicy: 'Refund completed được quản lý trong order_refunds.',
+      },
+    };
   }
 
   // ─── Báo Cáo Tuổi Nợ NCC ──────────────────────────────────────────────────

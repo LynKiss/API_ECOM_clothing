@@ -14,6 +14,7 @@ const class_validator_1 = require("class-validator");
 class CreateReturnDto {
     orderId;
     orderItemId;
+    returnQuantity;
     reason;
     description;
 }
@@ -28,6 +29,12 @@ __decorate([
     (0, class_validator_1.MaxLength)(20),
     __metadata("design:type", String)
 ], CreateReturnDto.prototype, "orderItemId", void 0);
+__decorate([
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(1),
+    (0, class_validator_1.Max)(9999),
+    __metadata("design:type", Number)
+], CreateReturnDto.prototype, "returnQuantity", void 0);
 __decorate([
     (0, class_validator_1.IsString)(),
     (0, class_validator_1.MaxLength)(255),

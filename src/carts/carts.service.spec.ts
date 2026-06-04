@@ -11,6 +11,7 @@ type MockRepository = {
   create?: jest.Mock;
   delete?: jest.Mock;
   find?: jest.Mock;
+  createQueryBuilder?: jest.Mock;
 };
 
 const createRepositoryMock = (): MockRepository => ({
@@ -21,13 +22,28 @@ const createRepositoryMock = (): MockRepository => ({
   create: jest.fn(),
   delete: jest.fn(),
   find: jest.fn(),
+  createQueryBuilder: jest.fn(),
 });
+
+function mockCartLine(repository: MockRepository, item: unknown) {
+  const builder = {
+    where: jest.fn().mockReturnThis(),
+    andWhere: jest.fn().mockReturnThis(),
+    getOne: jest.fn().mockResolvedValue(item),
+  };
+  repository.createQueryBuilder?.mockReturnValue(builder);
+}
 
 describe('CartsService', () => {
   let service: CartsService;
   let cartsRepository: MockRepository;
   let cartItemsRepository: MockRepository;
   let productsRepository: MockRepository;
+  let productImagesRepository: MockRepository;
+  let productVariantsRepository: MockRepository;
+  let variantImagesRepository: MockRepository;
+  let colorsRepository: MockRepository;
+  let sizesRepository: MockRepository;
   let usersRepository: MockRepository;
 
   const now = new Date('2026-04-19T08:00:00.000Z');
@@ -78,12 +94,28 @@ describe('CartsService', () => {
     cartsRepository = createRepositoryMock();
     cartItemsRepository = createRepositoryMock();
     productsRepository = createRepositoryMock();
+    productImagesRepository = createRepositoryMock();
+    productVariantsRepository = createRepositoryMock();
+    variantImagesRepository = createRepositoryMock();
+    colorsRepository = createRepositoryMock();
+    sizesRepository = createRepositoryMock();
     usersRepository = createRepositoryMock();
+    productImagesRepository.find?.mockResolvedValue([]);
+    productImagesRepository.findBy?.mockResolvedValue([]);
+    productVariantsRepository.find?.mockResolvedValue([]);
+    variantImagesRepository.find?.mockResolvedValue([]);
+    colorsRepository.find?.mockResolvedValue([]);
+    sizesRepository.find?.mockResolvedValue([]);
 
     service = new CartsService(
       cartsRepository as never,
       cartItemsRepository as never,
       productsRepository as never,
+      productImagesRepository as never,
+      productVariantsRepository as never,
+      variantImagesRepository as never,
+      colorsRepository as never,
+      sizesRepository as never,
       usersRepository as never,
     );
   });
@@ -97,7 +129,7 @@ describe('CartsService', () => {
       updatedAt: now,
     });
     productsRepository.findOneBy?.mockResolvedValue(product);
-    cartItemsRepository.findOneBy?.mockResolvedValue({
+    const existingCartItem = {
       cartItemId: 'item-1',
       cartId: 'cart-1',
       productId: product.productId,
@@ -105,7 +137,9 @@ describe('CartsService', () => {
       priceAtAdded: '120000.00',
       createdAt: now,
       updatedAt: now,
-    });
+    };
+    cartItemsRepository.findOneBy?.mockResolvedValue(existingCartItem);
+    mockCartLine(cartItemsRepository, existingCartItem);
     cartItemsRepository.save?.mockImplementation((entity) =>
       Promise.resolve(entity),
     );
@@ -141,7 +175,7 @@ describe('CartsService', () => {
       updatedAt: now,
     });
     productsRepository.findOneBy?.mockResolvedValue(product);
-    cartItemsRepository.findOneBy?.mockResolvedValue({
+    const existingCartItem = {
       cartItemId: 'item-1',
       cartId: 'cart-1',
       productId: product.productId,
@@ -149,7 +183,9 @@ describe('CartsService', () => {
       priceAtAdded: '120000.00',
       createdAt: now,
       updatedAt: now,
-    });
+    };
+    cartItemsRepository.findOneBy?.mockResolvedValue(existingCartItem);
+    mockCartLine(cartItemsRepository, existingCartItem);
 
     await expect(
       service.addItem(user.userId, {

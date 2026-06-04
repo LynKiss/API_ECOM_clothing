@@ -16,6 +16,7 @@ const coupon_usage_entity_1 = require("../discounts/entities/coupon-usage.entity
 const discount_entity_1 = require("../discounts/entities/discount.entity");
 const order_item_entity_1 = require("../orders/entities/order-item.entity");
 const order_entity_1 = require("../orders/entities/order.entity");
+const order_refund_entity_1 = require("../orders/entities/order-refund.entity");
 const purchase_order_entity_1 = require("../procurement/entities/purchase-order.entity");
 const inventory_transaction_entity_1 = require("../products/entities/inventory-transaction.entity");
 const product_entity_1 = require("../products/entities/product.entity");
@@ -37,6 +38,7 @@ exports.ReportsModule = ReportsModule = __decorate([
             roles_module_1.RolesModule,
             typeorm_1.TypeOrmModule.forFeature([
                 order_entity_1.OrderEntity,
+                order_refund_entity_1.OrderRefundEntity,
                 order_item_entity_1.OrderItemEntity,
                 product_entity_1.ProductEntity,
                 user_entity_1.UserEntity,

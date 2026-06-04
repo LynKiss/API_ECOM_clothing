@@ -14,11 +14,16 @@ import { ShoppingCartEntity } from '../carts/entities/shopping-cart.entity';
 import { ContactEntity } from '../contacts/entities/contact.entity';
 import { NotificationEntity } from '../notifications/entities/notification.entity';
 import { OrderItemEntity } from '../orders/entities/order-item.entity';
-import { OrderEntity } from '../orders/entities/order.entity';
+import {
+  OrderEntity,
+  OrderStatus,
+  PaymentMethod,
+  PaymentStatus,
+} from '../orders/entities/order.entity';
 import { PaymentTransactionEntity } from '../orders/entities/payment-transaction.entity';
 import { ReturnEntity } from '../orders/entities/return.entity';
 import { ShippingAddressEntity } from '../orders/entities/shipping-address.entity';
-import { In, Repository } from 'typeorm';
+import { Brackets, In, Repository } from 'typeorm';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { CreateAdminUserDto } from './dto/create-admin-user.dto';
 import { CreateShippingAddressDto } from './dto/create-shipping-address.dto';
@@ -600,26 +605,108 @@ export class UsersService {
 
   async findMyOrders(
     userId: string,
-    opts: { page: number; limit: number; status?: string },
+    opts: {
+      page: number;
+      limit: number;
+      status?: string;
+      paymentStatus?: string;
+      paymentMethod?: string;
+      search?: string;
+      from?: string;
+      to?: string;
+    },
   ) {
     await this.ensureUserExists(userId);
 
-    const where: Record<string, unknown> = { userId };
-    if (opts.status && opts.status !== 'all') where.status = opts.status;
+    const query = this.ordersRepository
+      .createQueryBuilder('order')
+      .leftJoin(OrderItemEntity, 'item', 'item.order_id = order.order_id')
+      .where('order.user_id = :userId', { userId })
+      .distinct(true);
 
-    const [orders, total] = await this.ordersRepository.findAndCount({
-      where,
-      order: { createdAt: 'DESC' },
-      skip: (opts.page - 1) * opts.limit,
-      take: opts.limit,
-    });
+    if (opts.status && opts.status !== 'all') {
+      if (!Object.values(OrderStatus).includes(opts.status as OrderStatus)) {
+        throw new BadRequestException('Trang thai don hang khong hop le');
+      }
+      query.andWhere('order.order_status = :status', { status: opts.status });
+    }
+
+    if (opts.paymentStatus && opts.paymentStatus !== 'all') {
+      if (
+        !Object.values(PaymentStatus).includes(
+          opts.paymentStatus as PaymentStatus,
+        )
+      ) {
+        throw new BadRequestException('Trang thai thanh toan khong hop le');
+      }
+      query.andWhere('order.payment_status = :paymentStatus', {
+        paymentStatus: opts.paymentStatus,
+      });
+    }
+
+    if (opts.paymentMethod && opts.paymentMethod !== 'all') {
+      if (
+        !Object.values(PaymentMethod).includes(
+          opts.paymentMethod as PaymentMethod,
+        )
+      ) {
+        throw new BadRequestException('Phuong thuc thanh toan khong hop le');
+      }
+      query.andWhere('order.payment_method = :paymentMethod', {
+        paymentMethod: opts.paymentMethod,
+      });
+    }
+
+    if (opts.from) {
+      const fromDate = new Date(`${opts.from}T00:00:00`);
+      if (Number.isNaN(fromDate.getTime())) {
+        throw new BadRequestException('Ngay bat dau khong hop le');
+      }
+      query.andWhere('order.created_at >= :fromDate', { fromDate });
+    }
+
+    if (opts.to) {
+      const toDate = new Date(`${opts.to}T23:59:59`);
+      if (Number.isNaN(toDate.getTime())) {
+        throw new BadRequestException('Ngay ket thuc khong hop le');
+      }
+      query.andWhere('order.created_at <= :toDate', { toDate });
+    }
+
+    const search = opts.search?.trim();
+    if (search) {
+      query.andWhere(
+        new Brackets((qb) => {
+          qb.where('order.order_id LIKE :search', { search: `%${search}%` })
+            .orWhere('order.full_name LIKE :search', {
+              search: `%${search}%`,
+            })
+            .orWhere('order.phone LIKE :search', { search: `%${search}%` })
+            .orWhere('order.address LIKE :search', { search: `%${search}%` })
+            .orWhere('order.payment_method LIKE :search', {
+              search: `%${search}%`,
+            })
+            .orWhere('item.product_name LIKE :search', {
+              search: `%${search}%`,
+            })
+            .orWhere('item.sku LIKE :search', { search: `%${search}%` });
+        }),
+      );
+    }
+
+    const [orders, total] = await query
+      .orderBy('order.createdAt', 'DESC')
+      .addOrderBy('order.orderId', 'DESC')
+      .skip((opts.page - 1) * opts.limit)
+      .take(opts.limit)
+      .getManyAndCount();
 
     return {
       items: orders.map((order) => this.toOrderSummaryResponse(order)),
       total,
       page: opts.page,
       limit: opts.limit,
-      totalPages: Math.ceil(total / opts.limit),
+      totalPages: Math.max(1, Math.ceil(total / opts.limit)),
     };
   }
 
@@ -648,7 +735,11 @@ export class UsersService {
       items: items.map((item) => ({
         id: item.orderItemId,
         productId: item.productId,
+        variantId: item.variantId,
         productName: item.productName,
+        sku: item.sku,
+        colorName: item.colorName,
+        sizeName: item.sizeName,
         quantity: item.quantity,
         unitPrice: item.unitPrice,
         lineTotal: item.lineTotal,

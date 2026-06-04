@@ -9,12 +9,17 @@ const core_1 = require("@nestjs/core");
 const node_path_1 = require("node:path");
 const helmet_1 = __importDefault(require("helmet"));
 const cookie_parser_1 = __importDefault(require("cookie-parser"));
+const express_1 = require("express");
 const app_module_1 = require("./app.module");
 const jwt_auth_guard_1 = require("./auth/jwt-auth.guard");
 const transform_interceptor_1 = require("./core/transform.interceptor");
 async function bootstrap() {
-    const app = await core_1.NestFactory.create(app_module_1.AppModule);
+    const app = await core_1.NestFactory.create(app_module_1.AppModule, {
+        bodyParser: false,
+    });
     const reflector = app.get(core_1.Reflector);
+    app.use((0, express_1.json)({ limit: process.env.JSON_BODY_LIMIT ?? '20mb' }));
+    app.use((0, express_1.urlencoded)({ extended: true, limit: process.env.URLENCODED_BODY_LIMIT ?? '20mb' }));
     app.use((0, helmet_1.default)());
     app.use((0, cookie_parser_1.default)());
     app.useGlobalGuards(new jwt_auth_guard_1.JwtAuthGuard(reflector));

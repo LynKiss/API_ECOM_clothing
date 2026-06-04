@@ -34,6 +34,35 @@ export declare class CommentsService {
         createdAt: Date;
         updatedAt: Date;
     }>;
+    findMyReviews(userId: string, params: {
+        page: number;
+        limit: number;
+        status?: string;
+        search?: string;
+    }): Promise<{
+        items: {
+            id: string;
+            commentId: string;
+            productId: string;
+            productName: string | null;
+            productSlug: string | null;
+            orderItemId: string | null;
+            content: string;
+            rating: number | null;
+            imageUrls: never[];
+            likeCount: number;
+            dislikeCount: number;
+            status: ProductCommentStatus;
+            createdAt: Date;
+            updatedAt: Date;
+        }[];
+        meta: {
+            page: number;
+            limit: number;
+            total: number;
+            totalPages: number;
+        };
+    }>;
     likeComment(commentId: string): Promise<{
         likeCount: number;
         dislikeCount: number;

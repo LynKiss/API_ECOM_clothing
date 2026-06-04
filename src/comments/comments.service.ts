@@ -6,7 +6,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Like, Repository } from 'typeorm';
+import { In, Like, Repository } from 'typeorm';
 import { OrderItemEntity } from '../orders/entities/order-item.entity';
 import { OrderEntity, OrderStatus } from '../orders/entities/order.entity';
 import { ProductEntity } from '../products/entities/product.entity';
@@ -110,6 +110,74 @@ export class CommentsService {
       status: savedReview.status,
       createdAt: savedReview.createdAt,
       updatedAt: savedReview.updatedAt,
+    };
+  }
+
+  async findMyReviews(
+    userId: string,
+    params: { page: number; limit: number; status?: string; search?: string },
+  ) {
+    await this.ensureUserExists(userId);
+    const page = params.page;
+    const limit = params.limit;
+    const where: Record<string, unknown> = { userId };
+    if (params.status && params.status !== 'all') {
+      where.status = params.status as ProductCommentStatus;
+    }
+
+    const reviews = await this.commentsRepository.find({
+      where,
+      order: { createdAt: 'DESC' },
+    });
+    const productIds = [...new Set(reviews.map((item) => item.productId))];
+    const products = productIds.length
+      ? await this.productsRepository.find({
+          where: { productId: In(productIds) },
+          select: ['productId', 'productName', 'productSlug'],
+        })
+      : [];
+    const productMap = new Map(products.map((item) => [item.productId, item]));
+
+    const mapped = reviews.map((review) => {
+        const product = productMap.get(review.productId);
+        return {
+          id: review.commentId,
+          commentId: review.commentId,
+          productId: review.productId,
+          productName: product?.productName ?? null,
+          productSlug: product?.productSlug ?? null,
+          orderItemId: review.orderItemId,
+          content: review.content,
+          rating: review.rating,
+          imageUrls: [],
+          likeCount: review.likeCount,
+          dislikeCount: review.dislikeCount,
+          status: review.status,
+          createdAt: review.createdAt,
+          updatedAt: review.updatedAt,
+        };
+      });
+    const normalizedSearch = params.search?.trim().toLowerCase();
+    const filtered = normalizedSearch
+      ? mapped.filter((item) =>
+          [
+            item.productName,
+            item.content,
+            item.status,
+            item.productId,
+            item.commentId,
+          ].filter(Boolean).join(' ').toLowerCase().includes(normalizedSearch),
+        )
+      : mapped;
+    const total = filtered.length;
+    return {
+      items: filtered.slice((page - 1) * limit, page * limit),
+      meta: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
     };
   }
 

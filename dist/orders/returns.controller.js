@@ -27,8 +27,15 @@ let ReturnsController = class ReturnsController {
     createReturn(currentUser, createReturnDto) {
         return this.ordersService.createReturn(currentUser._id, createReturnDto);
     }
-    getMyReturns(currentUser) {
-        return this.ordersService.findMyReturns(currentUser._id);
+    getMyReturns(currentUser, page = '1', limit = '10', search, status, from, to) {
+        return this.ordersService.findMyReturns(currentUser._id, {
+            page: Math.max(1, parseInt(page, 10) || 1),
+            limit: Math.min(100, Math.max(1, parseInt(limit, 10) || 10)),
+            search,
+            status,
+            from,
+            to,
+        });
     }
     getAllReturns() {
         return this.ordersService.findAllReturns();
@@ -54,8 +61,14 @@ __decorate([
     (0, common_1.Get)('me'),
     (0, customize_1.ResponseMessage)('Get my returns'),
     __param(0, (0, customize_1.User)()),
+    __param(1, (0, common_1.Query)('page')),
+    __param(2, (0, common_1.Query)('limit')),
+    __param(3, (0, common_1.Query)('search')),
+    __param(4, (0, common_1.Query)('status')),
+    __param(5, (0, common_1.Query)('from')),
+    __param(6, (0, common_1.Query)('to')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object]),
+    __metadata("design:paramtypes", [Object, Object, Object, String, String, String, String]),
     __metadata("design:returntype", void 0)
 ], ReturnsController.prototype, "getMyReturns", null);
 __decorate([

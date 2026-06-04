@@ -191,7 +191,7 @@ export declare class UsersController {
         createdAt: Date;
         updatedAt: Date;
     }>;
-    getMyOrders(currentUser: IUser, page?: string, limit?: string, status?: string): Promise<{
+    getMyOrders(currentUser: IUser, page?: string, limit?: string, status?: string, paymentStatus?: string, paymentMethod?: string, search?: string, from?: string, to?: string): Promise<{
         items: {
             id: string;
             status: import("../orders/entities/order.entity").OrderStatus;
@@ -220,7 +220,11 @@ export declare class UsersController {
         items: {
             id: string;
             productId: string;
+            variantId: string | null;
             productName: string;
+            sku: string | null;
+            colorName: string | null;
+            sizeName: string | null;
             quantity: number;
             unitPrice: string;
             lineTotal: string;

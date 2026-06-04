@@ -36,6 +36,7 @@ const order_item_entity_1 = require("./entities/order-item.entity");
 const order_tracking_entity_1 = require("./entities/order-tracking.entity");
 const order_status_history_entity_1 = require("./entities/order-status-history.entity");
 const order_entity_1 = require("./entities/order.entity");
+const order_refund_entity_1 = require("./entities/order-refund.entity");
 const payment_transaction_entity_1 = require("./entities/payment-transaction.entity");
 const return_entity_1 = require("./entities/return.entity");
 const shipping_address_entity_1 = require("./entities/shipping-address.entity");
@@ -59,6 +60,7 @@ exports.OrdersModule = OrdersModule = __decorate([
                 delivery_method_entity_1.DeliveryMethodEntity,
                 shipping_address_entity_1.ShippingAddressEntity,
                 order_entity_1.OrderEntity,
+                order_refund_entity_1.OrderRefundEntity,
                 order_tracking_entity_1.OrderTrackingEntity,
                 order_item_entity_1.OrderItemEntity,
                 order_status_history_entity_1.OrderStatusHistoryEntity,

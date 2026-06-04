@@ -52,12 +52,9 @@ export class NotificationsService {
       return this.dispatchNotification(saved);
     } catch (error) {
       if (this.isMissingNotificationsTable(error)) {
-        this.logger.warn(
-          'Notifications table is missing. Notification was skipped.',
-        );
+        this.logger.warn('Notifications table is missing. Notification was skipped.');
         return this.toFallbackResponse(notification);
       }
-
       throw error;
     }
   }
@@ -65,9 +62,7 @@ export class NotificationsService {
   async getAdminSummary() {
     try {
       const items = await this.notificationsRepository.find({
-        where: [
-          { channel: NotificationChannel.SYSTEM, userId: IsNull() },
-        ],
+        where: [{ channel: NotificationChannel.SYSTEM, userId: IsNull() }],
         order: { createdAt: 'DESC' },
         take: 20,
       });
@@ -81,9 +76,7 @@ export class NotificationsService {
       });
       return merged.slice(0, 30);
     } catch (error) {
-      if (this.isMissingNotificationsTable(error)) {
-        return [];
-      }
+      if (this.isMissingNotificationsTable(error)) return [];
       throw error;
     }
   }
@@ -111,28 +104,26 @@ export class NotificationsService {
         take: 10,
       });
 
-      const filtered = lowStockProducts.filter(
-        (p) => p.quantityAvailable <= 10,
-      );
-
-      return filtered.map((p) => ({
-        id: `low-stock-${p.productId}`,
-        userId: null,
-        email: null,
-        channel: NotificationChannel.SYSTEM,
-        status: NotificationStatus.SENT,
-        title: 'Sản phẩm sắp hết hàng',
-        message: `${p.productName} chỉ còn ${p.quantityAvailable} đơn vị`,
-        metadata: {
-          productId: p.productId,
-          type: 'low_stock',
-          quantity: p.quantityAvailable,
-        },
-        deliveryError: null,
-        sentAt: new Date(),
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      }));
+      return lowStockProducts
+        .filter((p) => p.quantityAvailable <= 10)
+        .map((p) => ({
+          id: `low-stock-${p.productId}`,
+          userId: null,
+          email: null,
+          channel: NotificationChannel.SYSTEM,
+          status: NotificationStatus.SENT,
+          title: 'Sản phẩm sắp hết hàng',
+          message: `${p.productName} chỉ còn ${p.quantityAvailable} đơn vị`,
+          metadata: {
+            productId: p.productId,
+            type: 'low_stock',
+            quantity: p.quantityAvailable,
+          },
+          deliveryError: null,
+          sentAt: new Date(),
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        }));
     } catch {
       return [];
     }
@@ -144,35 +135,28 @@ export class NotificationsService {
         where: { userId },
         order: { createdAt: 'DESC' },
       });
-
       return items.map((item) => this.toResponse(item));
     } catch (error) {
       if (this.isMissingNotificationsTable(error)) {
-        this.logger.warn(
-          'Notifications table is missing. Returning empty notifications list.',
-        );
+        this.logger.warn('Notifications table is missing. Returning empty notifications list.');
         return [];
       }
-
       throw error;
     }
   }
 
   async sendOrderCreatedNotification(userId: string, orderId: string) {
     const user = await this.usersRepository.findOneBy({ userId });
-    if (!user) {
-      return null;
-    }
+    if (!user) return null;
 
     const shortId = `#${orderId.slice(0, 8).toUpperCase()}`;
-
     return Promise.all([
       this.createNotification({
         userId,
         channel: NotificationChannel.SYSTEM,
         title: 'Đơn hàng đã được tạo',
         message: `Đơn hàng ${shortId} của bạn đã được tạo thành công.`,
-        metadata: { orderId, type: 'order_created' },
+        metadata: { orderId, type: 'order_created', targetUrl: `/client/orders/${orderId}` },
       }),
       this.createNotification({
         userId,
@@ -180,7 +164,7 @@ export class NotificationsService {
         channel: NotificationChannel.EMAIL,
         title: 'Xác nhận đơn hàng',
         message: `Hệ thống đã ghi nhận đơn hàng ${shortId} của bạn.`,
-        metadata: { orderId, type: 'order_created' },
+        metadata: { orderId, type: 'order_created', targetUrl: `/client/orders/${orderId}` },
       }),
     ]);
   }
@@ -196,13 +180,14 @@ export class NotificationsService {
       userId: null,
       channel: NotificationChannel.SYSTEM,
       title: 'Có đơn hàng mới',
-      message: `Đơn ${shortId} từ ${input.fullName || input.phone} — tổng tiền ${input.totalPayment}.`,
+      message: `Đơn ${shortId} từ ${input.fullName || input.phone} - tổng tiền ${input.totalPayment}.`,
       metadata: {
         orderId: input.orderId,
         fullName: input.fullName,
         phone: input.phone,
         totalPayment: input.totalPayment,
         type: 'admin_order_created',
+        targetUrl: `/admin/orders?openOrder=${input.orderId}`,
       },
     });
   }
@@ -213,20 +198,17 @@ export class NotificationsService {
     status: string,
   ) {
     const user = await this.usersRepository.findOneBy({ userId });
-    if (!user) {
-      return null;
-    }
+    if (!user) return null;
 
     const shortId = `#${orderId.slice(0, 8).toUpperCase()}`;
     const statusLabel = translateOrderStatus(status);
-
     return Promise.all([
       this.createNotification({
         userId,
         channel: NotificationChannel.SYSTEM,
         title: 'Đơn hàng đã thay đổi trạng thái',
         message: `Đơn hàng ${shortId} hiện đang ở trạng thái ${statusLabel}.`,
-        metadata: { orderId, status, type: 'order_status_changed' },
+        metadata: { orderId, status, statusLabel, type: 'order_status_changed', targetUrl: `/client/orders/${orderId}` },
       }),
       this.createNotification({
         userId,
@@ -234,7 +216,7 @@ export class NotificationsService {
         channel: NotificationChannel.EMAIL,
         title: 'Cập nhật trạng thái đơn hàng',
         message: `Đơn hàng ${shortId} đã chuyển sang trạng thái ${statusLabel}.`,
-        metadata: { orderId, status, type: 'order_status_changed' },
+        metadata: { orderId, status, statusLabel, type: 'order_status_changed', targetUrl: `/client/orders/${orderId}` },
       }),
     ]);
   }
@@ -246,30 +228,51 @@ export class NotificationsService {
     provider: string,
   ) {
     const user = await this.usersRepository.findOneBy({ userId });
-    if (!user) {
-      return null;
-    }
+    if (!user) return null;
 
     const shortId = `#${orderId.slice(0, 8).toUpperCase()}`;
-    const paymentLabel = translatePaymentStatus(paymentStatus);
-
+    const paymentStatusLabel = translatePaymentStatus(paymentStatus);
     return Promise.all([
       this.createNotification({
         userId,
         channel: NotificationChannel.SYSTEM,
         title: 'Cập nhật thanh toán',
-        message: `Thanh toán ${provider} cho đơn ${shortId} — trạng thái: ${paymentLabel}.`,
-        metadata: { orderId, paymentStatus, provider, type: 'payment_status' },
+        message: `Thanh toán ${provider} cho đơn ${shortId} - trạng thái: ${paymentStatusLabel}.`,
+        metadata: { orderId, paymentStatus, paymentStatusLabel, provider, type: 'payment_status', targetUrl: `/client/orders/${orderId}` },
       }),
       this.createNotification({
         userId,
         email: user.email,
         channel: NotificationChannel.EMAIL,
         title: 'Cập nhật thanh toán đơn hàng',
-        message: `Đơn hàng ${shortId} — kết quả thanh toán ${paymentLabel} qua ${provider}.`,
-        metadata: { orderId, paymentStatus, provider, type: 'payment_status' },
+        message: `Đơn hàng ${shortId} có kết quả thanh toán ${paymentStatusLabel} qua ${provider}.`,
+        metadata: { orderId, paymentStatus, paymentStatusLabel, provider, type: 'payment_status', targetUrl: `/client/orders/${orderId}` },
       }),
     ]);
+  }
+
+  async sendReturnStatusNotification(input: {
+    userId: string;
+    orderId: string;
+    returnId: string;
+    status: string;
+  }) {
+    const statusLabel = translateReturnStatus(input.status);
+    const shortOrderId = input.orderId.slice(0, 8).toUpperCase();
+    return this.createNotification({
+      userId: input.userId,
+      channel: NotificationChannel.SYSTEM,
+      title: 'Yêu cầu trả hàng đã cập nhật',
+      message: `Yêu cầu trả hàng #${input.returnId} của đơn #${shortOrderId}: ${statusLabel}.`,
+      metadata: {
+        orderId: input.orderId,
+        returnId: input.returnId,
+        status: input.status,
+        statusLabel,
+        type: 'return_status_changed',
+        targetUrl: `/client/returns?returnId=${input.returnId}`,
+      },
+    });
   }
 
   private async dispatchNotification(notification: NotificationEntity) {
@@ -357,9 +360,7 @@ export class NotificationsService {
   }
 
   private isMissingNotificationsTable(error: unknown) {
-    if (!(error instanceof QueryFailedError)) {
-      return false;
-    }
+    if (!(error instanceof QueryFailedError)) return false;
 
     const driverError = error.driverError as {
       code?: string;
@@ -398,6 +399,19 @@ function translatePaymentStatus(status: string): string {
     unpaid: 'chưa thanh toán',
     failed: 'thất bại',
     refunded: 'đã hoàn tiền',
+    partial_refunded: 'đã hoàn tiền một phần',
+  };
+  return map[status] ?? status;
+}
+
+function translateReturnStatus(status: string): string {
+  const map: Record<string, string> = {
+    requested: 'Đã gửi yêu cầu',
+    approved: 'Đã duyệt',
+    received: 'Đã nhận hàng trả về',
+    inspected: 'Đã kiểm tra hàng',
+    refunded: 'Đã hoàn tiền',
+    rejected: 'Từ chối',
   };
   return map[status] ?? status;
 }

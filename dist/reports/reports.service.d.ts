@@ -5,6 +5,7 @@ import { SimpleCacheService } from '../common/simple-cache.service';
 import { CouponUsageEntity } from '../discounts/entities/coupon-usage.entity';
 import { DiscountEntity } from '../discounts/entities/discount.entity';
 import { OrderItemEntity } from '../orders/entities/order-item.entity';
+import { OrderRefundEntity } from '../orders/entities/order-refund.entity';
 import { OrderEntity, OrderStatus, PaymentStatus } from '../orders/entities/order.entity';
 import { PurchaseOrderEntity } from '../procurement/entities/purchase-order.entity';
 import { InventoryTransactionEntity } from '../products/entities/inventory-transaction.entity';
@@ -17,6 +18,7 @@ import { QuerySalesSummaryDto } from './dto/query-sales-summary.dto';
 export declare class ReportsService {
     private readonly ordersRepository;
     private readonly orderItemsRepository;
+    private readonly orderRefundsRepository;
     private readonly productsRepository;
     private readonly usersRepository;
     private readonly inventoryTransactionsRepository;
@@ -27,7 +29,7 @@ export declare class ReportsService {
     private readonly riceDiagnosisHistoryRepository;
     private readonly poRepository;
     private readonly cache;
-    constructor(ordersRepository: Repository<OrderEntity>, orderItemsRepository: Repository<OrderItemEntity>, productsRepository: Repository<ProductEntity>, usersRepository: Repository<UserEntity>, inventoryTransactionsRepository: Repository<InventoryTransactionEntity>, discountsRepository: Repository<DiscountEntity>, couponUsageRepository: Repository<CouponUsageEntity>, categoriesRepository: Repository<CategoryEntity>, commentsRepository: Repository<CommentEntity>, riceDiagnosisHistoryRepository: Repository<RiceDiagnosisHistoryEntity>, poRepository: Repository<PurchaseOrderEntity>, cache: SimpleCacheService);
+    constructor(ordersRepository: Repository<OrderEntity>, orderItemsRepository: Repository<OrderItemEntity>, orderRefundsRepository: Repository<OrderRefundEntity>, productsRepository: Repository<ProductEntity>, usersRepository: Repository<UserEntity>, inventoryTransactionsRepository: Repository<InventoryTransactionEntity>, discountsRepository: Repository<DiscountEntity>, couponUsageRepository: Repository<CouponUsageEntity>, categoriesRepository: Repository<CategoryEntity>, commentsRepository: Repository<CommentEntity>, riceDiagnosisHistoryRepository: Repository<RiceDiagnosisHistoryEntity>, poRepository: Repository<PurchaseOrderEntity>, cache: SimpleCacheService);
     getDashboard(): Promise<{
         refreshedAt: string;
         filters: {
@@ -65,6 +67,10 @@ export declare class ReportsService {
             visibleReviews: number;
             averageRating: string;
             totalDiagnoses: number;
+        };
+        meta: {
+            revenuePolicy: string;
+            refundPolicy: string;
         };
         topProducts: any[];
         inventorySummary: any[];
@@ -190,6 +196,10 @@ export declare class ReportsService {
             limit: number;
             total: number;
             totalPages: number;
+            revenuePolicy: string;
+            refundPolicy: string;
+            cogsPolicy: string;
+            unallocatedRefund: number;
         };
     } | {
         items: {
@@ -197,7 +207,16 @@ export declare class ReportsService {
             soldQty: number;
             period: string;
         }[];
-        meta?: undefined;
+        meta: {
+            revenuePolicy: string;
+            refundPolicy: string;
+            page?: undefined;
+            limit?: undefined;
+            total?: undefined;
+            totalPages?: undefined;
+            cogsPolicy?: undefined;
+            unallocatedRefund?: undefined;
+        };
     }>;
     getAgingDebt(query: QueryAgingDebtDto): Promise<{
         summary: {

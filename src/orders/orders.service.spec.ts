@@ -22,6 +22,7 @@ type MockRepository = {
   createQueryBuilder?: jest.Mock;
   manager?: {
     transaction: jest.Mock;
+    query: jest.Mock;
   };
 };
 
@@ -40,6 +41,7 @@ const createRepositoryMock = (): MockRepository => ({
   createQueryBuilder: jest.fn(),
   manager: {
     transaction: jest.fn(),
+    query: jest.fn(),
   },
 });
 
@@ -48,17 +50,25 @@ describe('OrdersService', () => {
   let deliveryMethodsRepository: MockRepository;
   let shippingAddressesRepository: MockRepository;
   let ordersRepository: MockRepository;
+  let orderTrackingRepository: MockRepository;
   let orderItemsRepository: MockRepository;
   let orderStatusHistoryRepository: MockRepository;
+  let orderRefundsRepository: MockRepository;
   let cartsRepository: MockRepository;
   let cartItemsRepository: MockRepository;
   let productsRepository: MockRepository;
+  let productVariantsRepository: MockRepository;
+  let colorsRepository: MockRepository;
+  let sizesRepository: MockRepository;
   let inventoryTransactionsRepository: MockRepository;
   let usersRepository: MockRepository;
   let discountsRepository: MockRepository;
   let discountCategoriesRepository: MockRepository;
   let discountProductsRepository: MockRepository;
   let couponUsageRepository: MockRepository;
+  let returnsRepository: MockRepository;
+  let paymentTransactionsRepository: MockRepository;
+  let creditLimitRepository: MockRepository;
   let notificationsService: {
     sendOrderCreatedNotification: jest.Mock;
     sendOrderStatusNotification: jest.Mock;
@@ -100,17 +110,28 @@ describe('OrdersService', () => {
     deliveryMethodsRepository = createRepositoryMock();
     shippingAddressesRepository = createRepositoryMock();
     ordersRepository = createRepositoryMock();
+    ordersRepository.manager?.query.mockResolvedValue([]);
+    orderTrackingRepository = createRepositoryMock();
     orderItemsRepository = createRepositoryMock();
     orderStatusHistoryRepository = createRepositoryMock();
+    orderRefundsRepository = createRepositoryMock();
     cartsRepository = createRepositoryMock();
     cartItemsRepository = createRepositoryMock();
     productsRepository = createRepositoryMock();
+    productVariantsRepository = createRepositoryMock();
+    colorsRepository = createRepositoryMock();
+    sizesRepository = createRepositoryMock();
     inventoryTransactionsRepository = createRepositoryMock();
     usersRepository = createRepositoryMock();
+    usersRepository.findOneBy?.mockResolvedValue(userEntity);
     discountsRepository = createRepositoryMock();
     discountCategoriesRepository = createRepositoryMock();
     discountProductsRepository = createRepositoryMock();
     couponUsageRepository = createRepositoryMock();
+    returnsRepository = createRepositoryMock();
+    returnsRepository.find?.mockResolvedValue([]);
+    paymentTransactionsRepository = createRepositoryMock();
+    creditLimitRepository = createRepositoryMock();
     notificationsService = {
       sendOrderCreatedNotification: jest.fn(),
       sendOrderStatusNotification: jest.fn(),
@@ -122,20 +143,29 @@ describe('OrdersService', () => {
       deliveryMethodsRepository as never,
       shippingAddressesRepository as never,
       ordersRepository as never,
+      orderTrackingRepository as never,
       orderItemsRepository as never,
       orderStatusHistoryRepository as never,
+      orderRefundsRepository as never,
       cartsRepository as never,
       cartItemsRepository as never,
       productsRepository as never,
+      productVariantsRepository as never,
+      colorsRepository as never,
+      sizesRepository as never,
       inventoryTransactionsRepository as never,
       usersRepository as never,
       discountsRepository as never,
       discountCategoriesRepository as never,
       discountProductsRepository as never,
       couponUsageRepository as never,
-      createRepositoryMock() as never,
-      createRepositoryMock() as never,
+      returnsRepository as never,
+      paymentTransactionsRepository as never,
+      creditLimitRepository as never,
       notificationsService as never,
+      { emitNewOrder: jest.fn() } as never,
+      { isPaymentMethodActive: jest.fn().mockResolvedValue(true), getMomoConfig: jest.fn() } as never,
+      { recalculateAndReward: jest.fn() } as never,
     );
   });
 

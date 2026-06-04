@@ -43,12 +43,15 @@ const delivery_method_entity_1 = require("./entities/delivery-method.entity");
 const order_item_entity_1 = require("./entities/order-item.entity");
 const order_tracking_entity_1 = require("./entities/order-tracking.entity");
 const order_entity_1 = require("./entities/order.entity");
+const order_refund_entity_1 = require("./entities/order-refund.entity");
 const order_status_history_entity_1 = require("./entities/order-status-history.entity");
 const payment_transaction_entity_1 = require("./entities/payment-transaction.entity");
 const return_entity_1 = require("./entities/return.entity");
 const shipping_address_entity_1 = require("./entities/shipping-address.entity");
 const membership_service_1 = require("../membership/membership.service");
 const customer_credit_limit_entity_1 = require("../credit-limits/entities/customer-credit-limit.entity");
+const RETURN_WINDOW_DAYS = 7;
+const RETURN_WINDOW_MS = RETURN_WINDOW_DAYS * 24 * 60 * 60 * 1000;
 let OrdersService = OrdersService_1 = class OrdersService {
     deliveryMethodsRepository;
     shippingAddressesRepository;
@@ -56,6 +59,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
     orderTrackingRepository;
     orderItemsRepository;
     orderStatusHistoryRepository;
+    orderRefundsRepository;
     cartsRepository;
     cartItemsRepository;
     productsRepository;
@@ -78,13 +82,14 @@ let OrdersService = OrdersService_1 = class OrdersService {
     logger = new common_1.Logger(OrdersService_1.name);
     liveTrackingFreshnessMs = 2 * 60 * 1000;
     stalePaymentTtlMs = 30 * 60 * 1000;
-    constructor(deliveryMethodsRepository, shippingAddressesRepository, ordersRepository, orderTrackingRepository, orderItemsRepository, orderStatusHistoryRepository, cartsRepository, cartItemsRepository, productsRepository, productVariantsRepository, colorsRepository, sizesRepository, inventoryTransactionsRepository, usersRepository, discountsRepository, discountCategoriesRepository, discountProductsRepository, couponUsageRepository, returnsRepository, paymentTransactionsRepository, creditLimitRepository, notificationsService, ordersAdminPublisher, settingsService, membershipService) {
+    constructor(deliveryMethodsRepository, shippingAddressesRepository, ordersRepository, orderTrackingRepository, orderItemsRepository, orderStatusHistoryRepository, orderRefundsRepository, cartsRepository, cartItemsRepository, productsRepository, productVariantsRepository, colorsRepository, sizesRepository, inventoryTransactionsRepository, usersRepository, discountsRepository, discountCategoriesRepository, discountProductsRepository, couponUsageRepository, returnsRepository, paymentTransactionsRepository, creditLimitRepository, notificationsService, ordersAdminPublisher, settingsService, membershipService) {
         this.deliveryMethodsRepository = deliveryMethodsRepository;
         this.shippingAddressesRepository = shippingAddressesRepository;
         this.ordersRepository = ordersRepository;
         this.orderTrackingRepository = orderTrackingRepository;
         this.orderItemsRepository = orderItemsRepository;
         this.orderStatusHistoryRepository = orderStatusHistoryRepository;
+        this.orderRefundsRepository = orderRefundsRepository;
         this.cartsRepository = cartsRepository;
         this.cartItemsRepository = cartItemsRepository;
         this.productsRepository = productsRepository;
@@ -131,7 +136,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
     async ensureUserExists(userId) {
         const user = await this.usersRepository.findOneBy({ userId });
         if (!user) {
-            throw new common_1.UnauthorizedException('Người dùng không tồn tại');
+            throw new common_1.UnauthorizedException('NgÆ°á»i dÃ¹ng khÃ´ng tá»“n táº¡i');
         }
         return user;
     }
@@ -298,11 +303,164 @@ let OrdersService = OrdersService_1 = class OrdersService {
             [return_entity_1.ReturnStatus.REQUESTED]: [return_entity_1.ReturnStatus.APPROVED, return_entity_1.ReturnStatus.REJECTED],
             [return_entity_1.ReturnStatus.APPROVED]: [return_entity_1.ReturnStatus.RECEIVED, return_entity_1.ReturnStatus.REJECTED],
             [return_entity_1.ReturnStatus.REJECTED]: [],
-            [return_entity_1.ReturnStatus.RECEIVED]: [return_entity_1.ReturnStatus.INSPECTED, return_entity_1.ReturnStatus.REFUNDED],
+            [return_entity_1.ReturnStatus.RECEIVED]: [return_entity_1.ReturnStatus.INSPECTED],
             [return_entity_1.ReturnStatus.INSPECTED]: [return_entity_1.ReturnStatus.REFUNDED],
             [return_entity_1.ReturnStatus.REFUNDED]: [],
         };
         return allowedTransitions[currentStatus].includes(nextStatus);
+    }
+    getReturnStatusLabel(status) {
+        const labels = {
+            requested: 'Đã gửi yêu cầu',
+            approved: 'Đã duyệt',
+            received: 'Đã nhận hàng trả về',
+            inspected: 'Đã kiểm tra hàng',
+            refunded: 'Đã hoàn tiền',
+            rejected: 'Từ chối',
+        };
+        return labels[String(status).toLowerCase()] ?? status;
+    }
+    getReturnReasonLabel(reason) {
+        const normalized = String(reason ?? '').toLowerCase();
+        const labels = {
+            wrong_item: 'Nhận sai sản phẩm',
+            damaged: 'Sản phẩm lỗi hoặc hư hỏng',
+            defective: 'Sản phẩm lỗi hoặc hư hỏng',
+            not_as_described: 'Không đúng mô tả',
+            changed_mind: 'Không còn nhu cầu',
+            other: 'Lý do khác',
+        };
+        return labels[normalized] ?? reason ?? 'Lý do khác';
+    }
+    getReturnInspectionStatusLabel(status) {
+        const labels = {
+            pending: 'Chờ kiểm tra',
+            usable: 'Hàng đạt, nhập lại kho',
+            damaged: 'Hàng hỏng',
+            return_to_supplier: 'Trả nhà cung cấp',
+        };
+        return status ? labels[String(status).toLowerCase()] ?? status : null;
+    }
+    async getOrderReturnWindow(order) {
+        const returnableStatuses = new Set([
+            order_entity_1.OrderStatus.DELIVERED,
+            order_entity_1.OrderStatus.PARTIAL_DELIVERED,
+        ]);
+        if (!returnableStatuses.has(order.orderStatus)) {
+            return {
+                returnWindowDays: RETURN_WINDOW_DAYS,
+                deliveredAt: null,
+                returnDeadline: null,
+                canCreateReturn: false,
+                returnBlockedReason: 'RETURN_NOT_DELIVERED_YET',
+            };
+        }
+        const deliveredHistory = await this.orderStatusHistoryRepository.findOne({
+            where: [
+                { orderId: order.orderId, newStatus: order_entity_1.OrderStatus.DELIVERED },
+                { orderId: order.orderId, newStatus: order_entity_1.OrderStatus.PARTIAL_DELIVERED },
+            ],
+            order: { createdAt: 'ASC', historyId: 'ASC' },
+        });
+        const deliveredAt = deliveredHistory?.createdAt ?? order.updatedAt;
+        const returnDeadline = new Date(deliveredAt.getTime() + RETURN_WINDOW_MS);
+        const canCreateReturn = Date.now() <= returnDeadline.getTime();
+        return {
+            returnWindowDays: RETURN_WINDOW_DAYS,
+            deliveredAt,
+            returnDeadline,
+            canCreateReturn,
+            returnBlockedReason: canCreateReturn ? null : 'RETURN_WINDOW_EXPIRED',
+        };
+    }
+    async getReturnedQuantityForItem(orderItemId, excludeReturnId) {
+        const qb = this.returnsRepository
+            .createQueryBuilder('r')
+            .select('COALESCE(SUM(r.return_quantity), 0)', 'quantity')
+            .where('r.order_item_id = :orderItemId', { orderItemId })
+            .andWhere('r.return_status != :rejected', {
+            rejected: return_entity_1.ReturnStatus.REJECTED,
+        });
+        if (excludeReturnId) {
+            qb.andWhere('r.return_id != :excludeReturnId', { excludeReturnId });
+        }
+        const row = await qb.getRawOne();
+        return Number(row?.quantity ?? 0);
+    }
+    getDeliveredQuantityForReturn(orderItem) {
+        return orderItem.quantityDelivered > 0
+            ? orderItem.quantityDelivered
+            : orderItem.quantity;
+    }
+    calculateLineRefundAmount(orderItem, quantity) {
+        const unitNet = Number(orderItem.lineTotal) / Math.max(1, orderItem.quantity);
+        return Math.max(0, unitNet * quantity);
+    }
+    async getOrderItemImageMap(items) {
+        const productIds = [...new Set(items.map((item) => item.productId).filter(Boolean))];
+        const variantIds = [
+            ...new Set(items.map((item) => item.variantId).filter((id) => Boolean(id))),
+        ];
+        const [productRows, variantRows] = await Promise.all([
+            productIds.length
+                ? this.productsRepository.manager
+                    .createQueryBuilder()
+                    .select('pi.product_id', 'productId')
+                    .addSelect('pi.image_url', 'imageUrl')
+                    .from('product_images', 'pi')
+                    .where('pi.product_id IN (:...productIds)', { productIds })
+                    .orderBy('pi.is_primary', 'DESC')
+                    .addOrderBy('pi.sort_order', 'ASC')
+                    .addOrderBy('pi.product_image_id', 'ASC')
+                    .getRawMany()
+                : Promise.resolve([]),
+            variantIds.length
+                ? this.productsRepository.manager
+                    .createQueryBuilder()
+                    .select('vi.variant_id', 'variantId')
+                    .addSelect('vi.image_url', 'imageUrl')
+                    .from('variant_images', 'vi')
+                    .where('vi.variant_id IN (:...variantIds)', { variantIds })
+                    .orderBy('vi.sort_order', 'ASC')
+                    .addOrderBy('vi.variant_image_id', 'ASC')
+                    .getRawMany()
+                : Promise.resolve([]),
+        ]);
+        const productImageMap = new Map();
+        for (const row of productRows) {
+            if (!productImageMap.has(row.productId))
+                productImageMap.set(row.productId, row.imageUrl);
+        }
+        const variantImageMap = new Map();
+        for (const row of variantRows) {
+            if (!variantImageMap.has(row.variantId))
+                variantImageMap.set(row.variantId, row.imageUrl);
+        }
+        return new Map(items.map((item) => [
+            item.orderItemId,
+            (item.variantId ? variantImageMap.get(item.variantId) : null) ??
+                productImageMap.get(item.productId) ??
+                null,
+        ]));
+    }
+    async getCompletedRefundAmount(orderId) {
+        const row = await this.orderRefundsRepository
+            .createQueryBuilder('refund')
+            .select('COALESCE(SUM(refund.amount), 0)', 'amount')
+            .where('refund.order_id = :orderId', { orderId })
+            .andWhere('refund.refund_status = :status', {
+            status: order_refund_entity_1.OrderRefundStatus.COMPLETED,
+        })
+            .getRawOne();
+        return Number(row?.amount ?? 0);
+    }
+    async refreshOrderPaymentAfterRefund(order) {
+        const completedRefunds = await this.getCompletedRefundAmount(order.orderId);
+        const totalPayment = Number(order.totalPayment);
+        if (completedRefunds >= totalPayment && totalPayment > 0) {
+            order.paymentStatus = order_entity_1.PaymentStatus.REFUNDED;
+            await this.ordersRepository.save(order);
+        }
     }
     buildAddressSnapshot(address) {
         return [
@@ -424,7 +582,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
         };
     }
     async buildOrderDetail(order) {
-        const [items, history] = await Promise.all([
+        const [items, history, returns] = await Promise.all([
             this.orderItemsRepository.find({
                 where: { orderId: order.orderId },
                 order: { createdAt: 'ASC', orderItemId: 'ASC' },
@@ -432,6 +590,10 @@ let OrdersService = OrdersService_1 = class OrdersService {
             this.orderStatusHistoryRepository.find({
                 where: { orderId: order.orderId },
                 order: { createdAt: 'ASC', historyId: 'ASC' },
+            }),
+            this.returnsRepository.find({
+                where: { orderId: order.orderId },
+                order: { createdAt: 'ASC', returnId: 'ASC' },
             }),
         ]);
         const changedByIds = [
@@ -446,6 +608,8 @@ let OrdersService = OrdersService_1 = class OrdersService {
             for (const u of users)
                 usersMap.set(u.userId, u.username);
         }
+        const returnWindow = await this.getOrderReturnWindow(order);
+        const itemImageMap = await this.getOrderItemImageMap(items);
         return {
             id: order.orderId,
             status: order.orderStatus,
@@ -464,17 +628,55 @@ let OrdersService = OrdersService_1 = class OrdersService {
             address: order.address,
             createdAt: order.createdAt,
             updatedAt: order.updatedAt,
-            items: items.map((item) => ({
-                id: item.orderItemId,
-                productId: item.productId,
-                variantId: item.variantId,
-                sku: item.sku,
-                colorName: item.colorName,
-                sizeName: item.sizeName,
-                productName: item.productName,
-                quantity: item.quantity,
-                unitPrice: item.unitPrice,
-                lineTotal: item.lineTotal,
+            returnWindowDays: returnWindow.returnWindowDays,
+            returnDeadline: returnWindow.returnDeadline,
+            canCreateReturn: returnWindow.canCreateReturn,
+            returnBlockedReason: returnWindow.returnBlockedReason,
+            items: items.map((item) => {
+                const itemReturns = returns.filter((r) => r.orderItemId === item.orderItemId &&
+                    r.returnStatus !== return_entity_1.ReturnStatus.REJECTED);
+                const returnedQuantity = itemReturns.reduce((sum, r) => sum + Number(r.returnQuantity ?? 0), 0);
+                const deliveredQuantity = this.getDeliveredQuantityForReturn(item);
+                return {
+                    id: item.orderItemId,
+                    productId: item.productId,
+                    variantId: item.variantId,
+                    sku: item.sku,
+                    colorName: item.colorName,
+                    sizeName: item.sizeName,
+                    imageUrl: itemImageMap.get(item.orderItemId) ?? null,
+                    productName: item.productName,
+                    quantity: item.quantity,
+                    quantityDelivered: item.quantityDelivered,
+                    deliveredQuantity,
+                    returnableQuantity: Math.max(0, deliveredQuantity - returnedQuantity),
+                    returnedQuantity,
+                    returnWindowDays: returnWindow.returnWindowDays,
+                    returnDeadline: returnWindow.returnDeadline,
+                    canCreateReturn: returnWindow.canCreateReturn &&
+                        deliveredQuantity - returnedQuantity > 0,
+                    returnBlockedReason: deliveredQuantity - returnedQuantity > 0
+                        ? returnWindow.returnBlockedReason
+                        : 'NO_RETURNABLE_QUANTITY',
+                    unitPrice: item.unitPrice,
+                    lineTotal: item.lineTotal,
+                };
+            }),
+            returns: returns.map((item) => ({
+                id: item.returnId,
+                orderItemId: item.orderItemId,
+                returnQuantity: item.returnQuantity,
+                reason: item.reason,
+                description: item.description,
+                status: item.returnStatus,
+                statusLabel: this.getReturnStatusLabel(item.returnStatus),
+                inspectionStatus: item.inspectionStatus,
+                refundAmount: item.refundAmount,
+                maxRefundableAmount: item.maxRefundableAmount,
+                returnDeadline: returnWindow.returnDeadline,
+                returnWindowDays: returnWindow.returnWindowDays,
+                createdAt: item.createdAt,
+                updatedAt: item.updatedAt,
             })),
             history: history.map((entry) => ({
                 id: entry.historyId,
@@ -539,7 +741,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
         };
         return allowedTransitions[currentStatus].includes(nextStatus);
     }
-    async restockOrderItems(orderId, productRepository, orderItemsRepository, entityManager) {
+    async restockOrderItems(orderId, productRepository, orderItemsRepository, entityManager, options) {
         const items = await orderItemsRepository.find({
             where: { orderId },
         });
@@ -565,6 +767,19 @@ let OrdersService = OrdersService_1 = class OrdersService {
                 }
                 if (entityManager) {
                     await this.syncDefaultWarehouseStock(entityManager, item.productId, item.quantity);
+                    await entityManager.save(inventory_transaction_entity_1.InventoryTransactionEntity, entityManager.create(inventory_transaction_entity_1.InventoryTransactionEntity, {
+                        productId: item.productId,
+                        performedBy: options?.performedBy ?? null,
+                        transactionType: inventory_transaction_entity_1.InventoryTransactionType.RETURN_IN,
+                        quantityChange: item.quantity,
+                        quantityBefore: product.quantityAvailable - item.quantity,
+                        quantityAfter: product.quantityAvailable,
+                        referenceType: 'ORDER',
+                        referenceId: orderId,
+                        unitCostAtTime: product.avgCost ?? null,
+                        note: options?.note ?? 'Restock by order cancellation',
+                        relatedOrderId: orderId,
+                    }));
                 }
             }
         }
@@ -709,7 +924,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
             deliveryId: dto.deliveryId,
         });
         if (!deliveryMethod || !deliveryMethod.isActive) {
-            throw new common_1.NotFoundException('Phương thức giao hàng không khả dụng');
+            throw new common_1.NotFoundException('PhÆ°Æ¡ng thá»©c giao hÃ ng khÃ´ng kháº£ dá»¥ng');
         }
         const productIds = [...new Set(dto.items.map((it) => it.productId))];
         const products = await this.productsRepository.findBy(productIds.map((productId) => ({ productId })));
@@ -722,11 +937,11 @@ let OrdersService = OrdersService_1 = class OrdersService {
         for (const item of dto.items) {
             const product = productsById.get(item.productId);
             if (!product || !product.isShow) {
-                throw new common_1.BadRequestException('Sản phẩm không khả dụng');
+                throw new common_1.BadRequestException('Sáº£n pháº©m khÃ´ng kháº£ dá»¥ng');
             }
             if (item.quantity > product.quantityAvailable) {
                 if (!dto.allowBackorder) {
-                    throw new common_1.BadRequestException(`Sản phẩm ${product.productName} không đủ tồn kho`);
+                    throw new common_1.BadRequestException(`Sáº£n pháº©m ${product.productName} khÃ´ng Ä‘á»§ tá»“n kho`);
                 }
                 isBackorder = true;
             }
@@ -789,7 +1004,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
                     lock: { mode: 'pessimistic_write' },
                 });
                 if (!product) {
-                    throw new common_1.BadRequestException('Sản phẩm không tồn tại');
+                    throw new common_1.BadRequestException('Sáº£n pháº©m khÃ´ng tá»“n táº¡i');
                 }
                 const variantSnapshot = item.variantId ? guestVariantsById.get(item.variantId) : null;
                 const variant = item.variantId
@@ -804,7 +1019,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
                 const availableQuantity = variant?.stockQuantity ?? product.quantityAvailable;
                 const isLineBackorder = item.quantity > availableQuantity;
                 if (isLineBackorder && !dto.allowBackorder) {
-                    throw new common_1.BadRequestException(`Sản phẩm ${product.productName} không đủ tồn kho`);
+                    throw new common_1.BadRequestException(`Sáº£n pháº©m ${product.productName} khÃ´ng Ä‘á»§ tá»“n kho`);
                 }
                 const unitPrice = variant
                     ? variant.salePrice ?? variant.price ?? product.productPriceSale ?? product.productPrice
@@ -866,18 +1081,18 @@ let OrdersService = OrdersService_1 = class OrdersService {
     }
     async findGuestOrder(orderId, phone) {
         if (!phone || !orderId) {
-            throw new common_1.BadRequestException('Cần cung cấp orderId và phone');
+            throw new common_1.BadRequestException('Cáº§n cung cáº¥p orderId vÃ  phone');
         }
         const order = await this.ordersRepository.findOne({
             where: { orderId },
         });
         if (!order)
-            throw new common_1.NotFoundException('Không tìm thấy đơn hàng');
+            throw new common_1.NotFoundException('KhÃ´ng tÃ¬m tháº¥y Ä‘Æ¡n hÃ ng');
         if (!(await this.isGuestUserId(order.userId))) {
-            throw new common_1.UnauthorizedException('Đơn này thuộc tài khoản đăng ký, hãy đăng nhập để xem');
+            throw new common_1.UnauthorizedException('ÄÆ¡n nÃ y thuá»™c tÃ i khoáº£n Ä‘Äƒng kÃ½, hÃ£y Ä‘Äƒng nháº­p Ä‘á»ƒ xem');
         }
         if (order.phone.replace(/\s+/g, '') !== phone.replace(/\s+/g, '')) {
-            throw new common_1.UnauthorizedException('Số điện thoại không khớp');
+            throw new common_1.UnauthorizedException('Sá»‘ Ä‘iá»‡n thoáº¡i khÃ´ng khá»›p');
         }
         return this.buildOrderDetail(order);
     }
@@ -938,7 +1153,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
             const availableQuantity = variantSnapshot?.variant.stockQuantity ?? product.quantityAvailable;
             if (cartItem.quantity > availableQuantity) {
                 if (!createOrderDto.allowBackorder) {
-                    throw new common_1.BadRequestException(`Sản phẩm ${product.productName} không đủ tồn kho`);
+                    throw new common_1.BadRequestException(`Sáº£n pháº©m ${product.productName} khÃ´ng Ä‘á»§ tá»“n kho`);
                 }
                 isBackorder = true;
             }
@@ -955,15 +1170,15 @@ let OrdersService = OrdersService_1 = class OrdersService {
         let creditLimit = null;
         if (createOrderDto.paymentMethod === order_entity_1.PaymentMethod.CREDIT) {
             if (!currentUser.isWholesale) {
-                throw new common_1.BadRequestException('Phương thức "Mua nợ" chỉ dành cho khách sỉ được cấp hạn mức tín dụng');
+                throw new common_1.BadRequestException('PhÆ°Æ¡ng thá»©c "Mua ná»£" chá»‰ dÃ nh cho khÃ¡ch sá»‰ Ä‘Æ°á»£c cáº¥p háº¡n má»©c tÃ­n dá»¥ng');
             }
             creditLimit = await this.creditLimitRepository.findOne({ where: { userId, isActive: true } });
             if (!creditLimit) {
-                throw new common_1.BadRequestException('Bạn chưa được cấp hạn mức tín dụng. Vui lòng liên hệ shop để được hỗ trợ');
+                throw new common_1.BadRequestException('Báº¡n chÆ°a Ä‘Æ°á»£c cáº¥p háº¡n má»©c tÃ­n dá»¥ng. Vui lÃ²ng liÃªn há»‡ shop Ä‘á»ƒ Ä‘Æ°á»£c há»— trá»£');
             }
             const available = Number(creditLimit.creditLimit) - Number(creditLimit.currentDebt ?? 0);
             if (totalPayment > available) {
-                throw new common_1.BadRequestException(`Vượt hạn mức tín dụng. Hạn mức còn lại: ${Math.max(0, available).toLocaleString('vi-VN')}₫`);
+                throw new common_1.BadRequestException(`VÆ°á»£t háº¡n má»©c tÃ­n dá»¥ng. Háº¡n má»©c cÃ²n láº¡i: ${Math.max(0, available).toLocaleString('vi-VN')}â‚«`);
             }
         }
         const addressSnapshot = this.buildAddressSnapshot(shippingAddress);
@@ -1030,7 +1245,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
                 const availableQuantity = variant?.stockQuantity ?? product.quantityAvailable;
                 const isLineBackorder = cartItem.quantity > availableQuantity;
                 if (isLineBackorder && !createOrderDto.allowBackorder) {
-                    throw new common_1.BadRequestException(`Sản phẩm ${product.productName} không đủ tồn kho`);
+                    throw new common_1.BadRequestException(`Sáº£n pháº©m ${product.productName} khÃ´ng Ä‘á»§ tá»“n kho`);
                 }
                 const lineTotal = Number(cartItem.priceAtAdded) * cartItem.quantity;
                 const orderItem = transactionalOrderItemsRepository.create({
@@ -1093,7 +1308,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
                     : order_entity_1.OrderStatus.PENDING,
                 changedBy: userId,
                 note: isBackorder
-                    ? 'Đơn hàng đặt trước — chờ nhập kho'
+                    ? 'Đơn hàng đặt trước - chờ nhập kho'
                     : 'Đơn hàng đã được tạo',
             });
             await transactionalHistoryRepository.save(history);
@@ -1191,39 +1406,17 @@ let OrdersService = OrdersService_1 = class OrdersService {
         if (![order_entity_1.OrderStatus.PENDING, order_entity_1.OrderStatus.CONFIRMED].includes(order.orderStatus)) {
             throw new common_1.BadRequestException('Order cannot be cancelled');
         }
+        if (order.paymentStatus === order_entity_1.PaymentStatus.PAID) {
+            throw new common_1.BadRequestException('PAID_ORDER_CANCEL_REQUIRES_REFUND');
+        }
         await this.ordersRepository.manager.transaction(async (entityManager) => {
             const transactionalOrdersRepository = entityManager.getRepository(order_entity_1.OrderEntity);
             const transactionalOrderItemsRepository = entityManager.getRepository(order_item_entity_1.OrderItemEntity);
             const transactionalProductsRepository = entityManager.getRepository(product_entity_1.ProductEntity);
             const transactionalHistoryRepository = entityManager.getRepository(order_status_history_entity_1.OrderStatusHistoryEntity);
-            const transactionalInventoryTransactionsRepository = entityManager.getRepository(inventory_transaction_entity_1.InventoryTransactionEntity);
             const transactionalDiscountsRepository = entityManager.getRepository(discount_entity_1.DiscountEntity);
             const transactionalCouponUsageRepository = entityManager.getRepository(coupon_usage_entity_1.CouponUsageEntity);
-            const items = await transactionalOrderItemsRepository.find({
-                where: { orderId: order.orderId },
-            });
-            await this.restockOrderItems(order.orderId, transactionalProductsRepository, transactionalOrderItemsRepository, entityManager);
-            for (const item of items) {
-                const product = await transactionalProductsRepository.findOneBy({
-                    productId: item.productId,
-                });
-                const inventoryTransaction = transactionalInventoryTransactionsRepository.create({
-                    productId: item.productId,
-                    performedBy: userId,
-                    transactionType: inventory_transaction_entity_1.InventoryTransactionType.RETURN_IN,
-                    quantityChange: item.quantity,
-                    quantityBefore: product
-                        ? product.quantityAvailable - item.quantity
-                        : null,
-                    quantityAfter: product ? product.quantityAvailable : null,
-                    referenceType: 'ORDER',
-                    referenceId: order.orderId,
-                    unitCostAtTime: product?.avgCost ?? null,
-                    note: 'Restock by order cancellation',
-                    relatedOrderId: order.orderId,
-                });
-                await transactionalInventoryTransactionsRepository.save(inventoryTransaction);
-            }
+            await this.restockOrderItems(order.orderId, transactionalProductsRepository, transactionalOrderItemsRepository, entityManager, { performedBy: userId, note: 'Restock by customer cancellation' });
             await this.revertDiscountUsage(order, transactionalDiscountsRepository, transactionalCouponUsageRepository);
             order.orderStatus = order_entity_1.OrderStatus.CANCELLED;
             await transactionalOrdersRepository.save(order);
@@ -1285,10 +1478,10 @@ let OrdersService = OrdersService_1 = class OrdersService {
                         lock: { mode: 'pessimistic_write' },
                     });
                     if (!product) {
-                        throw new common_1.BadRequestException(`Sản phẩm trong đơn không còn tồn tại`);
+                        throw new common_1.BadRequestException(`Sáº£n pháº©m trong Ä‘Æ¡n khÃ´ng cÃ²n tá»“n táº¡i`);
                     }
                     if (item.quantity > product.quantityAvailable) {
-                        throw new common_1.BadRequestException(`Sản phẩm ${product.productName} vẫn chưa đủ tồn kho để fulfill`);
+                        throw new common_1.BadRequestException(`Sáº£n pháº©m ${product.productName} váº«n chÆ°a Ä‘á»§ tá»“n kho Ä‘á»ƒ fulfill`);
                     }
                     const qtyBefore = product.quantityAvailable;
                     product.quantityAvailable -= item.quantity;
@@ -1334,28 +1527,13 @@ let OrdersService = OrdersService_1 = class OrdersService {
                     where: { orderId: order.orderId },
                 });
                 if (nextStatus === order_entity_1.OrderStatus.CANCELLED) {
-                    await this.restockOrderItems(order.orderId, transactionalProductsRepository, transactionalOrderItemsRepository, entityManager);
-                    for (const item of items) {
-                        const product = await transactionalProductsRepository.findOneBy({
-                            productId: item.productId,
-                        });
-                        const inventoryTransaction = transactionalInventoryTransactionsRepository.create({
-                            productId: item.productId,
-                            performedBy: currentUser._id,
-                            transactionType: inventory_transaction_entity_1.InventoryTransactionType.RETURN_IN,
-                            quantityChange: item.quantity,
-                            quantityBefore: product
-                                ? product.quantityAvailable - item.quantity
-                                : null,
-                            quantityAfter: product ? product.quantityAvailable : null,
-                            referenceType: 'ORDER',
-                            referenceId: order.orderId,
-                            unitCostAtTime: product?.avgCost ?? null,
-                            note: 'Restock by admin cancellation',
-                            relatedOrderId: order.orderId,
-                        });
-                        await transactionalInventoryTransactionsRepository.save(inventoryTransaction);
+                    if (order.paymentStatus === order_entity_1.PaymentStatus.PAID) {
+                        throw new common_1.BadRequestException('PAID_ORDER_CANCEL_REQUIRES_REFUND');
                     }
+                    await this.restockOrderItems(order.orderId, transactionalProductsRepository, transactionalOrderItemsRepository, entityManager, {
+                        performedBy: currentUser._id,
+                        note: updateOrderStatusDto.note ?? 'Restock by admin cancellation',
+                    });
                     await this.revertDiscountUsage(order, transactionalDiscountsRepository, transactionalCouponUsageRepository);
                 }
                 else if (nextStatus === order_entity_1.OrderStatus.RETURNED) {
@@ -1374,6 +1552,9 @@ let OrdersService = OrdersService_1 = class OrdersService {
                             userId: order.userId,
                             reason: updateOrderStatusDto.note ?? 'Returned by admin',
                             description: null,
+                            returnQuantity: this.getDeliveredQuantityForReturn(item),
+                            maxRefundableAmount: item.lineTotal,
+                            refundedQuantity: 0,
                             returnStatus: return_entity_1.ReturnStatus.RECEIVED,
                             inspectionStatus: return_entity_1.ReturnInspectionStatus.PENDING,
                             refundAmount: null,
@@ -1477,7 +1658,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
                 paymentUrl = momoUrl;
             }
             else {
-                console.warn('[MoMo] Không lấy được paymentUrl — kiểm tra credentials và BACKEND_URL trong .env');
+                console.warn('[MoMo] KhÃ´ng láº¥y Ä‘Æ°á»£c paymentUrl â€” kiá»ƒm tra credentials vÃ  BACKEND_URL trong .env');
             }
         }
         return {
@@ -1830,11 +2011,175 @@ let OrdersService = OrdersService_1 = class OrdersService {
             })),
         };
     }
+    async findAllRefunds(params) {
+        const { page, limit, status, reason, orderId } = params;
+        const skip = (page - 1) * limit;
+        const query = this.orderRefundsRepository.createQueryBuilder('refund');
+        if (status) {
+            query.andWhere('refund.refundStatus = :status', { status });
+        }
+        if (reason) {
+            query.andWhere('refund.reason = :reason', { reason });
+        }
+        if (orderId) {
+            query.andWhere('refund.orderId = :orderId', { orderId });
+        }
+        query.orderBy('refund.createdAt', 'DESC').skip(skip).take(limit);
+        const [items, total] = await query.getManyAndCount();
+        const orderIds = [...new Set(items.map((item) => item.orderId))];
+        const orders = orderIds.length
+            ? await this.ordersRepository.find({ where: { orderId: (0, typeorm_2.In)(orderIds) } })
+            : [];
+        const orderMap = new Map(orders.map((order) => [order.orderId, order]));
+        return {
+            meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
+            items: items.map((item) => {
+                const order = orderMap.get(item.orderId);
+                return {
+                    refundId: item.refundId,
+                    orderId: item.orderId,
+                    returnId: item.returnId,
+                    reason: item.reason,
+                    refundStatus: item.refundStatus,
+                    amount: item.amount,
+                    paymentProvider: item.paymentProvider,
+                    manualReference: item.manualReference,
+                    note: item.note,
+                    createdBy: item.createdBy,
+                    updatedBy: item.updatedBy,
+                    createdAt: item.createdAt,
+                    updatedAt: item.updatedAt,
+                    order: order
+                        ? {
+                            status: order.orderStatus,
+                            paymentStatus: order.paymentStatus,
+                            totalPayment: order.totalPayment,
+                            fullName: order.fullName,
+                            phone: order.phone,
+                        }
+                        : null,
+                };
+            }),
+        };
+    }
+    async createCancelPaidOrderRefund(currentUser, dto) {
+        await this.ensureUserExists(currentUser._id);
+        const order = await this.findAnyOrder(dto.orderId);
+        if (![order_entity_1.OrderStatus.PENDING, order_entity_1.OrderStatus.CONFIRMED].includes(order.orderStatus)) {
+            throw new common_1.BadRequestException('ORDER_NOT_ELIGIBLE_FOR_CANCEL_REFUND');
+        }
+        if (order.paymentStatus !== order_entity_1.PaymentStatus.PAID) {
+            throw new common_1.BadRequestException('ORDER_PAYMENT_NOT_PAID');
+        }
+        const duplicate = await this.orderRefundsRepository.findOne({
+            where: {
+                orderId: order.orderId,
+                reason: order_refund_entity_1.OrderRefundReason.CANCEL_PAID_ORDER,
+                refundStatus: (0, typeorm_2.In)([order_refund_entity_1.OrderRefundStatus.PENDING, order_refund_entity_1.OrderRefundStatus.APPROVED]),
+            },
+        });
+        if (duplicate) {
+            throw new common_1.BadRequestException('OPEN_CANCEL_REFUND_ALREADY_EXISTS');
+        }
+        const completedRefunds = await this.getCompletedRefundAmount(order.orderId);
+        const refundable = Math.max(0, Number(order.totalPayment) - completedRefunds);
+        const amount = dto.amount ?? refundable;
+        if (!Number.isFinite(amount) || amount <= 0 || amount > refundable) {
+            throw new common_1.BadRequestException('REFUND_AMOUNT_EXCEEDS_AVAILABLE');
+        }
+        return this.orderRefundsRepository.save(this.orderRefundsRepository.create({
+            orderId: order.orderId,
+            returnId: null,
+            reason: order_refund_entity_1.OrderRefundReason.CANCEL_PAID_ORDER,
+            refundStatus: order_refund_entity_1.OrderRefundStatus.PENDING,
+            amount: amount.toFixed(2),
+            paymentProvider: order.paymentMethod,
+            manualReference: null,
+            note: dto.note ?? 'Pending paid order cancellation refund',
+            createdBy: currentUser._id,
+            updatedBy: currentUser._id,
+        }));
+    }
+    async updateRefundStatus(currentUser, refundId, dto) {
+        await this.ensureUserExists(currentUser._id);
+        const refund = await this.orderRefundsRepository.findOneBy({ refundId });
+        if (!refund) {
+            throw new common_1.NotFoundException('Refund not found');
+        }
+        if (refund.refundStatus === order_refund_entity_1.OrderRefundStatus.COMPLETED) {
+            throw new common_1.BadRequestException('Refund already completed');
+        }
+        if (dto.status === order_refund_entity_1.OrderRefundStatus.COMPLETED &&
+            !(dto.manualReference?.trim() || dto.note?.trim() || refund.manualReference)) {
+            throw new common_1.BadRequestException('REFUND_COMPLETION_REFERENCE_REQUIRED');
+        }
+        refund.refundStatus = dto.status;
+        refund.manualReference =
+            dto.manualReference?.trim() || refund.manualReference || null;
+        refund.note = dto.note?.trim() || refund.note;
+        refund.updatedBy = currentUser._id;
+        await this.ordersRepository.manager.transaction(async (em) => {
+            await em.save(order_refund_entity_1.OrderRefundEntity, refund);
+            if (dto.status !== order_refund_entity_1.OrderRefundStatus.COMPLETED) {
+                return;
+            }
+            const order = await em.findOne(order_entity_1.OrderEntity, {
+                where: { orderId: refund.orderId },
+                lock: { mode: 'pessimistic_write' },
+            });
+            if (!order) {
+                throw new common_1.NotFoundException('Order not found');
+            }
+            if (refund.reason === order_refund_entity_1.OrderRefundReason.CANCEL_PAID_ORDER) {
+                if (order.orderStatus === order_entity_1.OrderStatus.CANCELLED) {
+                    return;
+                }
+                if (![order_entity_1.OrderStatus.PENDING, order_entity_1.OrderStatus.CONFIRMED].includes(order.orderStatus)) {
+                    throw new common_1.BadRequestException('ORDER_NOT_ELIGIBLE_FOR_CANCEL_REFUND');
+                }
+                await this.restockOrderItems(order.orderId, em.getRepository(product_entity_1.ProductEntity), em.getRepository(order_item_entity_1.OrderItemEntity), em, {
+                    performedBy: currentUser._id,
+                    note: 'Restock after paid order refund completion',
+                });
+                await this.revertDiscountUsage(order, em.getRepository(discount_entity_1.DiscountEntity), em.getRepository(coupon_usage_entity_1.CouponUsageEntity));
+                order.orderStatus = order_entity_1.OrderStatus.CANCELLED;
+                order.paymentStatus = order_entity_1.PaymentStatus.REFUNDED;
+                await em.save(order_entity_1.OrderEntity, order);
+                await em.save(order_status_history_entity_1.OrderStatusHistoryEntity, em.create(order_status_history_entity_1.OrderStatusHistoryEntity, {
+                    orderId: order.orderId,
+                    oldStatus: order_entity_1.OrderStatus.PENDING,
+                    newStatus: order_entity_1.OrderStatus.CANCELLED,
+                    changedBy: currentUser._id,
+                    note: 'Cancel paid order after manual refund completion',
+                }));
+            }
+            if (refund.reason === order_refund_entity_1.OrderRefundReason.RETURN && refund.returnId) {
+                const returnRequest = await em.findOne(return_entity_1.ReturnEntity, {
+                    where: { returnId: refund.returnId },
+                });
+                if (returnRequest) {
+                    returnRequest.refundAmount = refund.amount;
+                    returnRequest.refundedQuantity = returnRequest.returnQuantity;
+                    returnRequest.returnStatus = return_entity_1.ReturnStatus.REFUNDED;
+                    await em.save(return_entity_1.ReturnEntity, returnRequest);
+                }
+                if (Number(refund.amount) >= Number(order.totalPayment)) {
+                    order.paymentStatus = order_entity_1.PaymentStatus.REFUNDED;
+                    await em.save(order_entity_1.OrderEntity, order);
+                }
+            }
+        });
+        return this.orderRefundsRepository.findOneBy({ refundId });
+    }
     async createReturn(userId, createReturnDto) {
         await this.ensureUserExists(userId);
         const order = await this.findOwnedOrder(userId, createReturnDto.orderId);
-        if (order.orderStatus !== order_entity_1.OrderStatus.DELIVERED) {
-            throw new common_1.BadRequestException('Only delivered orders can be returned');
+        if (![order_entity_1.OrderStatus.DELIVERED, order_entity_1.OrderStatus.PARTIAL_DELIVERED].includes(order.orderStatus)) {
+            throw new common_1.BadRequestException('RETURN_NOT_DELIVERED_YET');
+        }
+        const returnWindow = await this.getOrderReturnWindow(order);
+        if (!returnWindow.canCreateReturn) {
+            throw new common_1.BadRequestException(returnWindow.returnBlockedReason);
         }
         const orderItem = await this.orderItemsRepository.findOneBy({
             orderItemId: createReturnDto.orderItemId,
@@ -1843,62 +2188,183 @@ let OrdersService = OrdersService_1 = class OrdersService {
         if (!orderItem) {
             throw new common_1.NotFoundException('Order item not found');
         }
-        const existingReturn = await this.returnsRepository.findOneBy({
-            userId,
-            orderItemId: createReturnDto.orderItemId,
-        });
-        if (existingReturn) {
-            throw new common_1.BadRequestException('Return request already exists');
+        const deliveredQuantity = this.getDeliveredQuantityForReturn(orderItem);
+        if (deliveredQuantity <= 0) {
+            throw new common_1.BadRequestException('Item has not been delivered');
         }
+        const alreadyReturned = await this.getReturnedQuantityForItem(createReturnDto.orderItemId);
+        const remainingReturnable = Math.max(0, deliveredQuantity - alreadyReturned);
+        if (createReturnDto.returnQuantity > remainingReturnable) {
+            throw new common_1.BadRequestException(`RETURN_QUANTITY_EXCEEDS_AVAILABLE:${remainingReturnable}`);
+        }
+        const maxRefundableAmount = this.calculateLineRefundAmount(orderItem, createReturnDto.returnQuantity);
         const created = this.returnsRepository.create({
             orderId: order.orderId,
             orderItemId: createReturnDto.orderItemId,
+            returnQuantity: createReturnDto.returnQuantity,
             userId,
             reason: createReturnDto.reason,
             description: createReturnDto.description ?? null,
             returnStatus: return_entity_1.ReturnStatus.REQUESTED,
             refundAmount: null,
+            maxRefundableAmount: maxRefundableAmount.toFixed(2),
+            refundedQuantity: 0,
         });
         const saved = await this.returnsRepository.save(created);
-        await this.notificationsService.createNotification({
+        await this.notificationsService.sendReturnStatusNotification({
             userId,
-            title: 'Yeu cau tra hang da duoc tao',
-            message: `Yeu cau tra hang cho don ${order.orderId} da duoc tiep nhan.`,
-            metadata: { returnId: saved.returnId, orderId: order.orderId },
+            orderId: order.orderId,
+            returnId: saved.returnId,
+            status: saved.returnStatus,
         });
-        return saved;
+        return {
+            ...saved,
+            statusLabel: this.getReturnStatusLabel(saved.returnStatus),
+            returnWindowDays: returnWindow.returnWindowDays,
+            returnDeadline: returnWindow.returnDeadline,
+            canCreateReturn: returnWindow.canCreateReturn,
+            returnBlockedReason: returnWindow.returnBlockedReason,
+        };
     }
-    async findMyReturns(userId) {
+    async findMyReturns(userId, query = {}) {
         await this.ensureUserExists(userId);
+        const page = Math.max(1, Number(query.page) || 1);
+        const limit = Math.min(100, Math.max(1, Number(query.limit) || 10));
+        const normalizedSearch = query.search?.trim().toLowerCase();
         const items = await this.returnsRepository.find({
             where: { userId },
             order: { createdAt: 'DESC' },
         });
-        return items.map((item) => ({
-            id: item.returnId,
-            orderId: item.orderId,
-            orderItemId: item.orderItemId,
-            reason: item.reason,
-            description: item.description,
-            status: item.returnStatus,
-            refundAmount: item.refundAmount,
-            createdAt: item.createdAt,
-            updatedAt: item.updatedAt,
+        const orderItemIds = [...new Set(items.map((item) => item.orderItemId))];
+        const orderIds = [...new Set(items.map((item) => item.orderId))];
+        const [orderItems, orders] = await Promise.all([
+            orderItemIds.length
+                ? this.orderItemsRepository.find({
+                    where: { orderItemId: (0, typeorm_2.In)(orderItemIds) },
+                })
+                : Promise.resolve([]),
+            orderIds.length
+                ? this.ordersRepository.find({ where: { orderId: (0, typeorm_2.In)(orderIds) } })
+                : Promise.resolve([]),
+        ]);
+        const orderItemMap = new Map(orderItems.map((item) => [item.orderItemId, item]));
+        const orderMap = new Map(orders.map((order) => [order.orderId, order]));
+        const itemImageMap = await this.getOrderItemImageMap(orderItems);
+        const enriched = await Promise.all(items.map(async (item) => {
+            const order = orderMap.get(item.orderId);
+            const returnWindow = order
+                ? await this.getOrderReturnWindow(order)
+                : {
+                    returnWindowDays: RETURN_WINDOW_DAYS,
+                    returnDeadline: null,
+                    canCreateReturn: false,
+                    returnBlockedReason: 'ORDER_NOT_FOUND',
+                };
+            const orderItem = orderItemMap.get(item.orderItemId);
+            return {
+                id: item.returnId,
+                returnId: item.returnId,
+                orderId: item.orderId,
+                orderItemId: item.orderItemId,
+                productId: orderItem?.productId ?? null,
+                productName: orderItem?.productName ?? null,
+                sku: orderItem?.sku ?? null,
+                colorName: orderItem?.colorName ?? null,
+                sizeName: orderItem?.sizeName ?? null,
+                imageUrl: itemImageMap.get(item.orderItemId) ?? null,
+                returnQuantity: item.returnQuantity,
+                reason: item.reason,
+                reasonLabel: this.getReturnReasonLabel(item.reason),
+                description: item.description,
+                status: item.returnStatus,
+                statusLabel: this.getReturnStatusLabel(item.returnStatus),
+                inspectionStatus: item.inspectionStatus,
+                inspectionStatusLabel: this.getReturnInspectionStatusLabel(item.inspectionStatus),
+                refundAmount: item.refundAmount,
+                maxRefundableAmount: item.maxRefundableAmount,
+                refundedQuantity: item.refundedQuantity,
+                returnWindowDays: returnWindow.returnWindowDays,
+                returnDeadline: returnWindow.returnDeadline,
+                canCreateReturn: returnWindow.canCreateReturn,
+                returnBlockedReason: returnWindow.returnBlockedReason,
+                createdAt: item.createdAt,
+                updatedAt: item.updatedAt,
+            };
         }));
+        const fromTime = query.from ? new Date(query.from).getTime() : null;
+        const toTime = query.to ? new Date(query.to).getTime() : null;
+        const filtered = enriched.filter((item) => {
+            if (query.status && query.status !== 'all' && item.status !== query.status)
+                return false;
+            const createdTime = new Date(item.createdAt).getTime();
+            if (fromTime && createdTime < fromTime)
+                return false;
+            if (toTime && createdTime > toTime + 24 * 60 * 60 * 1000 - 1)
+                return false;
+            if (normalizedSearch) {
+                const haystack = [
+                    item.returnId,
+                    item.id,
+                    item.orderId,
+                    item.productName,
+                    item.sku,
+                    item.colorName,
+                    item.sizeName,
+                    item.reason,
+                    item.reasonLabel,
+                    item.description,
+                    item.statusLabel,
+                ].filter(Boolean).join(' ').toLowerCase();
+                if (!haystack.includes(normalizedSearch))
+                    return false;
+            }
+            return true;
+        });
+        const total = filtered.length;
+        return {
+            items: filtered.slice((page - 1) * limit, page * limit),
+            meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
+        };
     }
     async findAllReturns() {
         const items = await this.returnsRepository.find({
             order: { createdAt: 'DESC' },
         });
+        const orderItemIds = [...new Set(items.map((i) => i.orderItemId))];
+        const orderItems = orderItemIds.length
+            ? await this.orderItemsRepository.find({
+                where: { orderItemId: (0, typeorm_2.In)(orderItemIds) },
+            })
+            : [];
+        const orderItemMap = new Map(orderItems.map((i) => [i.orderItemId, i]));
+        const itemImageMap = await this.getOrderItemImageMap(orderItems);
         return items.map((item) => ({
+            returnId: item.returnId,
             id: item.returnId,
             orderId: item.orderId,
             userId: item.userId,
             orderItemId: item.orderItemId,
+            productName: orderItemMap.get(item.orderItemId)?.productName ?? null,
+            imageUrl: itemImageMap.get(item.orderItemId) ?? null,
+            sku: orderItemMap.get(item.orderItemId)?.sku ?? null,
+            colorName: orderItemMap.get(item.orderItemId)?.colorName ?? null,
+            sizeName: orderItemMap.get(item.orderItemId)?.sizeName ?? null,
+            orderedQuantity: orderItemMap.get(item.orderItemId)?.quantity ?? null,
+            deliveredQuantity: orderItemMap.get(item.orderItemId)
+                ? this.getDeliveredQuantityForReturn(orderItemMap.get(item.orderItemId))
+                : null,
+            returnQuantity: item.returnQuantity,
             reason: item.reason,
             description: item.description,
+            returnStatus: item.returnStatus,
             status: item.returnStatus,
+            inspectionStatus: item.inspectionStatus,
+            inspectionNote: item.inspectionNote,
+            inspectedBy: item.inspectedBy,
+            inspectedAt: item.inspectedAt,
             refundAmount: item.refundAmount,
+            maxRefundableAmount: item.maxRefundableAmount,
+            refundedQuantity: item.refundedQuantity,
             createdAt: item.createdAt,
             updatedAt: item.updatedAt,
         }));
@@ -1924,26 +2390,75 @@ let OrdersService = OrdersService_1 = class OrdersService {
         }
         returnRequest.returnStatus = updateReturnStatusDto.status;
         if (updateReturnStatusDto.status === return_entity_1.ReturnStatus.REFUNDED) {
+            if (returnRequest.inspectionStatus === return_entity_1.ReturnInspectionStatus.PENDING) {
+                throw new common_1.BadRequestException('RETURN_INSPECTION_REQUIRED');
+            }
+            const requestedRefund = Number(updateReturnStatusDto.refundAmount ?? returnRequest.maxRefundableAmount);
+            const maxRefund = Number(returnRequest.maxRefundableAmount);
+            if (!Number.isFinite(requestedRefund) || requestedRefund <= 0) {
+                throw new common_1.BadRequestException('INVALID_REFUND_AMOUNT');
+            }
+            if (requestedRefund > maxRefund) {
+                throw new common_1.BadRequestException('REFUND_AMOUNT_EXCEEDS_MAX');
+            }
             returnRequest.refundAmount =
-                updateReturnStatusDto.refundAmount ?? orderItem.lineTotal;
+                updateReturnStatusDto.refundAmount ?? returnRequest.maxRefundableAmount;
+            returnRequest.refundedQuantity = returnRequest.returnQuantity;
             const order = await this.findAnyOrder(returnRequest.orderId);
-            order.orderStatus = order_entity_1.OrderStatus.RETURNED;
-            order.paymentStatus =
-                order.paymentStatus === order_entity_1.PaymentStatus.PAID
-                    ? order_entity_1.PaymentStatus.REFUNDED
-                    : order_entity_1.PaymentStatus.FAILED;
+            const existingRefund = await this.orderRefundsRepository.findOne({
+                where: {
+                    returnId: returnRequest.returnId,
+                    reason: order_refund_entity_1.OrderRefundReason.RETURN,
+                },
+            });
+            if (existingRefund) {
+                existingRefund.amount = requestedRefund.toFixed(2);
+                existingRefund.refundStatus = order_refund_entity_1.OrderRefundStatus.COMPLETED;
+                existingRefund.manualReference =
+                    updateReturnStatusDto.note ?? existingRefund.manualReference;
+                existingRefund.note = updateReturnStatusDto.note ?? existingRefund.note;
+                existingRefund.updatedBy = currentUser._id;
+                await this.orderRefundsRepository.save(existingRefund);
+            }
+            else {
+                await this.orderRefundsRepository.save(this.orderRefundsRepository.create({
+                    orderId: returnRequest.orderId,
+                    returnId: returnRequest.returnId,
+                    reason: order_refund_entity_1.OrderRefundReason.RETURN,
+                    refundStatus: order_refund_entity_1.OrderRefundStatus.COMPLETED,
+                    amount: requestedRefund.toFixed(2),
+                    paymentProvider: order.paymentMethod,
+                    manualReference: updateReturnStatusDto.note ?? null,
+                    note: updateReturnStatusDto.note ?? 'Return refund completed',
+                    createdBy: currentUser._id,
+                    updatedBy: currentUser._id,
+                }));
+            }
+            const orderItems = await this.orderItemsRepository.find({
+                where: { orderId: order.orderId },
+            });
+            const allDeliveredQty = orderItems.reduce((sum, item) => sum + this.getDeliveredQuantityForReturn(item), 0);
+            const returnedQtyRows = await this.returnsRepository
+                .createQueryBuilder('r')
+                .select('COALESCE(SUM(r.return_quantity), 0)', 'quantity')
+                .where('r.order_id = :orderId', { orderId: order.orderId })
+                .andWhere('r.return_status = :status', {
+                status: return_entity_1.ReturnStatus.REFUNDED,
+            })
+                .getRawOne();
+            const refundedQty = Number(returnedQtyRows?.quantity ?? 0) + returnRequest.returnQuantity;
+            if (allDeliveredQty > 0 && refundedQty >= allDeliveredQty) {
+                order.orderStatus = order_entity_1.OrderStatus.RETURNED;
+            }
+            await this.refreshOrderPaymentAfterRefund(order);
             await this.ordersRepository.save(order);
         }
         const savedReturn = await this.returnsRepository.save(returnRequest);
-        await this.notificationsService.createNotification({
+        await this.notificationsService.sendReturnStatusNotification({
             userId: savedReturn.userId,
-            title: 'Yeu cau tra hang da thay doi trang thai',
-            message: `Yeu cau tra hang ${savedReturn.returnId} da chuyen sang ${savedReturn.returnStatus}.`,
-            metadata: {
-                returnId: savedReturn.returnId,
-                status: savedReturn.returnStatus,
-                orderId: savedReturn.orderId,
-            },
+            orderId: savedReturn.orderId,
+            returnId: savedReturn.returnId,
+            status: savedReturn.returnStatus,
         });
         return savedReturn;
     }
@@ -1951,7 +2466,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
         await this.ensureUserExists(currentUser._id);
         const order = await this.findAnyOrder(orderId);
         if (order.orderStatus !== order_entity_1.OrderStatus.SHIPPING) {
-            throw new common_1.BadRequestException('Partial delivery chỉ thực hiện khi đơn đang SHIPPING');
+            throw new common_1.BadRequestException('Partial delivery chá»‰ thá»±c hiá»‡n khi Ä‘Æ¡n Ä‘ang SHIPPING');
         }
         const orderItems = await this.orderItemsRepository.find({
             where: { orderId: order.orderId },
@@ -1960,13 +2475,13 @@ let OrdersService = OrdersService_1 = class OrdersService {
         for (const dto of items) {
             const oi = itemMap.get(dto.orderItemId);
             if (!oi) {
-                throw new common_1.BadRequestException(`Order item ${dto.orderItemId} không thuộc đơn này`);
+                throw new common_1.BadRequestException(`Order item ${dto.orderItemId} khÃ´ng thuá»™c Ä‘Æ¡n nÃ y`);
             }
             if (dto.deliveredQty > oi.quantity) {
-                throw new common_1.BadRequestException(`Số lượng giao (${dto.deliveredQty}) không thể vượt số đặt (${oi.quantity}) của ${oi.productName}`);
+                throw new common_1.BadRequestException(`Sá»‘ lÆ°á»£ng giao (${dto.deliveredQty}) khÃ´ng thá»ƒ vÆ°á»£t sá»‘ Ä‘áº·t (${oi.quantity}) cá»§a ${oi.productName}`);
             }
             if (dto.deliveredQty < 0) {
-                throw new common_1.BadRequestException('deliveredQty không được âm');
+                throw new common_1.BadRequestException('deliveredQty khÃ´ng Ä‘Æ°á»£c Ã¢m');
             }
         }
         let totalDeliveredQty = 0;
@@ -2044,17 +2559,17 @@ let OrdersService = OrdersService_1 = class OrdersService {
     async inspectReturn(currentUser, returnId, decision, note) {
         await this.ensureUserExists(currentUser._id);
         if (decision === return_entity_1.ReturnInspectionStatus.PENDING) {
-            throw new common_1.BadRequestException('Decision không thể là PENDING');
+            throw new common_1.BadRequestException('Decision khÃ´ng thá»ƒ lÃ  PENDING');
         }
         const returnRequest = await this.returnsRepository.findOneBy({ returnId });
         if (!returnRequest) {
             throw new common_1.NotFoundException('Return request not found');
         }
         if (returnRequest.returnStatus !== return_entity_1.ReturnStatus.RECEIVED) {
-            throw new common_1.BadRequestException('Chỉ có thể inspect return đã RECEIVED');
+            throw new common_1.BadRequestException('Chá»‰ cÃ³ thá»ƒ inspect return Ä‘Ã£ RECEIVED');
         }
         if (returnRequest.inspectionStatus !== return_entity_1.ReturnInspectionStatus.PENDING) {
-            throw new common_1.BadRequestException(`Return này đã được inspect (${returnRequest.inspectionStatus})`);
+            throw new common_1.BadRequestException(`Return nÃ y Ä‘Ã£ Ä‘Æ°á»£c inspect (${returnRequest.inspectionStatus})`);
         }
         const orderItem = await this.orderItemsRepository.findOneBy({
             orderItemId: returnRequest.orderItemId,
@@ -2067,23 +2582,34 @@ let OrdersService = OrdersService_1 = class OrdersService {
                 lock: { mode: 'pessimistic_write' },
             });
             if (decision === return_entity_1.ReturnInspectionStatus.USABLE && product) {
+                const returnQty = returnRequest.returnQuantity;
                 const qtyBefore = product.quantityAvailable;
-                product.quantityAvailable += orderItem.quantity;
+                product.quantityAvailable += returnQty;
                 await em.save(product_entity_1.ProductEntity, product);
+                if (orderItem.variantId) {
+                    const variant = await em.findOne(product_variant_entity_1.ProductVariantEntity, {
+                        where: { variantId: orderItem.variantId },
+                        lock: { mode: 'pessimistic_write' },
+                    });
+                    if (variant) {
+                        variant.stockQuantity += returnQty;
+                        await em.save(product_variant_entity_1.ProductVariantEntity, variant);
+                    }
+                }
                 await em.save(inventory_transaction_entity_1.InventoryTransactionEntity, em.create(inventory_transaction_entity_1.InventoryTransactionEntity, {
                     productId: product.productId,
                     performedBy: currentUser._id,
                     transactionType: inventory_transaction_entity_1.InventoryTransactionType.RETURN_IN,
-                    quantityChange: orderItem.quantity,
+                    quantityChange: returnQty,
                     quantityBefore: qtyBefore,
                     quantityAfter: product.quantityAvailable,
                     referenceType: 'RETURN',
                     referenceId: String(returnRequest.returnId),
                     unitCostAtTime: product.avgCost ?? null,
-                    note: note ?? 'Return inspection: USABLE — restocked',
+                    note: note ?? 'Return inspection: USABLE â€” restocked',
                     relatedOrderId: returnRequest.orderId,
                 }));
-                await this.syncDefaultWarehouseStock(em, product.productId, orderItem.quantity);
+                await this.syncDefaultWarehouseStock(em, product.productId, returnQty);
             }
             else if (decision === return_entity_1.ReturnInspectionStatus.DAMAGED && product) {
                 await em.save(inventory_transaction_entity_1.InventoryTransactionEntity, em.create(inventory_transaction_entity_1.InventoryTransactionEntity, {
@@ -2096,7 +2622,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
                     referenceType: 'RETURN',
                     referenceId: String(returnRequest.returnId),
                     unitCostAtTime: product.avgCost ?? null,
-                    note: note ?? `Return inspection: DAMAGED — written off ${orderItem.quantity} unit(s)`,
+                    note: note ?? `Return inspection: DAMAGED â€” written off ${orderItem.quantity} unit(s)`,
                     relatedOrderId: returnRequest.orderId,
                 }));
             }
@@ -2113,13 +2639,13 @@ let OrdersService = OrdersService_1 = class OrdersService {
         await this.ensureUserExists(currentUser._id);
         const order = await this.findAnyOrder(orderId);
         if (order.paymentStatus === order_entity_1.PaymentStatus.PAID) {
-            throw new common_1.BadRequestException('Đơn hàng đã được thanh toán');
+            throw new common_1.BadRequestException('ÄÆ¡n hÃ ng Ä‘Ã£ Ä‘Æ°á»£c thanh toÃ¡n');
         }
         if (order.paymentMethod === order_entity_1.PaymentMethod.COD) {
-            throw new common_1.BadRequestException('COD tự động ghi nhận khi giao — không cần xác nhận thủ công');
+            throw new common_1.BadRequestException('COD tá»± Ä‘á»™ng ghi nháº­n khi giao â€” khÃ´ng cáº§n xÃ¡c nháº­n thá»§ cÃ´ng');
         }
         if (order.paymentMethod === order_entity_1.PaymentMethod.CREDIT) {
-            throw new common_1.BadRequestException('Đơn hàng mua nợ — công nợ được quản lý riêng qua hạn mức tín dụng');
+            throw new common_1.BadRequestException('ÄÆ¡n hÃ ng mua ná»£ â€” cÃ´ng ná»£ Ä‘Æ°á»£c quáº£n lÃ½ riÃªng qua háº¡n má»©c tÃ­n dá»¥ng');
         }
         order.paymentStatus = order_entity_1.PaymentStatus.PAID;
         await this.ordersRepository.save(order);
@@ -2132,7 +2658,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
             paymentStatus: order_entity_1.PaymentStatus.PAID,
             amount: order.totalPayment,
             gatewayCode: 'MANUAL',
-            gatewayMessage: `Xác nhận thủ công bởi admin ${currentUser._id}`,
+            gatewayMessage: `XÃ¡c nháº­n thá»§ cÃ´ng bá»Ÿi admin ${currentUser._id}`,
             rawPayload: { confirmedBy: currentUser._id, confirmedAt: new Date().toISOString() },
         });
         await this.paymentTransactionsRepository.save(tx);
@@ -2143,7 +2669,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
         await this.ensureUserExists(currentUser._id);
         const order = await this.findOrderDetail(currentUser, orderId);
         if (order.status !== order_entity_1.OrderStatus.SHIPPING) {
-            throw new common_1.BadRequestException('Chỉ có thể xác nhận nhận hàng khi đơn đang được giao');
+            throw new common_1.BadRequestException('Chá»‰ cÃ³ thá»ƒ xÃ¡c nháº­n nháº­n hÃ ng khi Ä‘Æ¡n Ä‘ang Ä‘Æ°á»£c giao');
         }
         await this.ordersRepository.manager.transaction(async (em) => {
             const transactionalProductsRepo = em.getRepository(product_entity_1.ProductEntity);
@@ -2188,22 +2714,24 @@ exports.OrdersService = OrdersService = OrdersService_1 = __decorate([
     __param(3, (0, typeorm_1.InjectRepository)(order_tracking_entity_1.OrderTrackingEntity)),
     __param(4, (0, typeorm_1.InjectRepository)(order_item_entity_1.OrderItemEntity)),
     __param(5, (0, typeorm_1.InjectRepository)(order_status_history_entity_1.OrderStatusHistoryEntity)),
-    __param(6, (0, typeorm_1.InjectRepository)(shopping_cart_entity_1.ShoppingCartEntity)),
-    __param(7, (0, typeorm_1.InjectRepository)(cart_item_entity_1.CartItemEntity)),
-    __param(8, (0, typeorm_1.InjectRepository)(product_entity_1.ProductEntity)),
-    __param(9, (0, typeorm_1.InjectRepository)(product_variant_entity_1.ProductVariantEntity)),
-    __param(10, (0, typeorm_1.InjectRepository)(color_entity_1.ColorEntity)),
-    __param(11, (0, typeorm_1.InjectRepository)(size_entity_1.SizeEntity)),
-    __param(12, (0, typeorm_1.InjectRepository)(inventory_transaction_entity_1.InventoryTransactionEntity)),
-    __param(13, (0, typeorm_1.InjectRepository)(user_entity_1.UserEntity)),
-    __param(14, (0, typeorm_1.InjectRepository)(discount_entity_1.DiscountEntity)),
-    __param(15, (0, typeorm_1.InjectRepository)(discount_category_entity_1.DiscountCategoryEntity)),
-    __param(16, (0, typeorm_1.InjectRepository)(discount_product_entity_1.DiscountProductEntity)),
-    __param(17, (0, typeorm_1.InjectRepository)(coupon_usage_entity_1.CouponUsageEntity)),
-    __param(18, (0, typeorm_1.InjectRepository)(return_entity_1.ReturnEntity)),
-    __param(19, (0, typeorm_1.InjectRepository)(payment_transaction_entity_1.PaymentTransactionEntity)),
-    __param(20, (0, typeorm_1.InjectRepository)(customer_credit_limit_entity_1.CustomerCreditLimitEntity)),
+    __param(6, (0, typeorm_1.InjectRepository)(order_refund_entity_1.OrderRefundEntity)),
+    __param(7, (0, typeorm_1.InjectRepository)(shopping_cart_entity_1.ShoppingCartEntity)),
+    __param(8, (0, typeorm_1.InjectRepository)(cart_item_entity_1.CartItemEntity)),
+    __param(9, (0, typeorm_1.InjectRepository)(product_entity_1.ProductEntity)),
+    __param(10, (0, typeorm_1.InjectRepository)(product_variant_entity_1.ProductVariantEntity)),
+    __param(11, (0, typeorm_1.InjectRepository)(color_entity_1.ColorEntity)),
+    __param(12, (0, typeorm_1.InjectRepository)(size_entity_1.SizeEntity)),
+    __param(13, (0, typeorm_1.InjectRepository)(inventory_transaction_entity_1.InventoryTransactionEntity)),
+    __param(14, (0, typeorm_1.InjectRepository)(user_entity_1.UserEntity)),
+    __param(15, (0, typeorm_1.InjectRepository)(discount_entity_1.DiscountEntity)),
+    __param(16, (0, typeorm_1.InjectRepository)(discount_category_entity_1.DiscountCategoryEntity)),
+    __param(17, (0, typeorm_1.InjectRepository)(discount_product_entity_1.DiscountProductEntity)),
+    __param(18, (0, typeorm_1.InjectRepository)(coupon_usage_entity_1.CouponUsageEntity)),
+    __param(19, (0, typeorm_1.InjectRepository)(return_entity_1.ReturnEntity)),
+    __param(20, (0, typeorm_1.InjectRepository)(payment_transaction_entity_1.PaymentTransactionEntity)),
+    __param(21, (0, typeorm_1.InjectRepository)(customer_credit_limit_entity_1.CustomerCreditLimitEntity)),
     __metadata("design:paramtypes", [typeorm_2.Repository,
+        typeorm_2.Repository,
         typeorm_2.Repository,
         typeorm_2.Repository,
         typeorm_2.Repository,

@@ -469,21 +469,77 @@ let UsersService = class UsersService {
     }
     async findMyOrders(userId, opts) {
         await this.ensureUserExists(userId);
-        const where = { userId };
-        if (opts.status && opts.status !== 'all')
-            where.status = opts.status;
-        const [orders, total] = await this.ordersRepository.findAndCount({
-            where,
-            order: { createdAt: 'DESC' },
-            skip: (opts.page - 1) * opts.limit,
-            take: opts.limit,
-        });
+        const query = this.ordersRepository
+            .createQueryBuilder('order')
+            .leftJoin(order_item_entity_1.OrderItemEntity, 'item', 'item.order_id = order.order_id')
+            .where('order.user_id = :userId', { userId })
+            .distinct(true);
+        if (opts.status && opts.status !== 'all') {
+            if (!Object.values(order_entity_1.OrderStatus).includes(opts.status)) {
+                throw new common_1.BadRequestException('Trang thai don hang khong hop le');
+            }
+            query.andWhere('order.order_status = :status', { status: opts.status });
+        }
+        if (opts.paymentStatus && opts.paymentStatus !== 'all') {
+            if (!Object.values(order_entity_1.PaymentStatus).includes(opts.paymentStatus)) {
+                throw new common_1.BadRequestException('Trang thai thanh toan khong hop le');
+            }
+            query.andWhere('order.payment_status = :paymentStatus', {
+                paymentStatus: opts.paymentStatus,
+            });
+        }
+        if (opts.paymentMethod && opts.paymentMethod !== 'all') {
+            if (!Object.values(order_entity_1.PaymentMethod).includes(opts.paymentMethod)) {
+                throw new common_1.BadRequestException('Phuong thuc thanh toan khong hop le');
+            }
+            query.andWhere('order.payment_method = :paymentMethod', {
+                paymentMethod: opts.paymentMethod,
+            });
+        }
+        if (opts.from) {
+            const fromDate = new Date(`${opts.from}T00:00:00`);
+            if (Number.isNaN(fromDate.getTime())) {
+                throw new common_1.BadRequestException('Ngay bat dau khong hop le');
+            }
+            query.andWhere('order.created_at >= :fromDate', { fromDate });
+        }
+        if (opts.to) {
+            const toDate = new Date(`${opts.to}T23:59:59`);
+            if (Number.isNaN(toDate.getTime())) {
+                throw new common_1.BadRequestException('Ngay ket thuc khong hop le');
+            }
+            query.andWhere('order.created_at <= :toDate', { toDate });
+        }
+        const search = opts.search?.trim();
+        if (search) {
+            query.andWhere(new typeorm_2.Brackets((qb) => {
+                qb.where('order.order_id LIKE :search', { search: `%${search}%` })
+                    .orWhere('order.full_name LIKE :search', {
+                    search: `%${search}%`,
+                })
+                    .orWhere('order.phone LIKE :search', { search: `%${search}%` })
+                    .orWhere('order.address LIKE :search', { search: `%${search}%` })
+                    .orWhere('order.payment_method LIKE :search', {
+                    search: `%${search}%`,
+                })
+                    .orWhere('item.product_name LIKE :search', {
+                    search: `%${search}%`,
+                })
+                    .orWhere('item.sku LIKE :search', { search: `%${search}%` });
+            }));
+        }
+        const [orders, total] = await query
+            .orderBy('order.createdAt', 'DESC')
+            .addOrderBy('order.orderId', 'DESC')
+            .skip((opts.page - 1) * opts.limit)
+            .take(opts.limit)
+            .getManyAndCount();
         return {
             items: orders.map((order) => this.toOrderSummaryResponse(order)),
             total,
             page: opts.page,
             limit: opts.limit,
-            totalPages: Math.ceil(total / opts.limit),
+            totalPages: Math.max(1, Math.ceil(total / opts.limit)),
         };
     }
     async findMyOrderDetail(userId, orderId) {
@@ -508,7 +564,11 @@ let UsersService = class UsersService {
             items: items.map((item) => ({
                 id: item.orderItemId,
                 productId: item.productId,
+                variantId: item.variantId,
                 productName: item.productName,
+                sku: item.sku,
+                colorName: item.colorName,
+                sizeName: item.sizeName,
                 quantity: item.quantity,
                 unitPrice: item.unitPrice,
                 lineTotal: item.lineTotal,

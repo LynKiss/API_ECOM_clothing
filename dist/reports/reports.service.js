@@ -22,6 +22,7 @@ const simple_cache_service_1 = require("../common/simple-cache.service");
 const coupon_usage_entity_1 = require("../discounts/entities/coupon-usage.entity");
 const discount_entity_1 = require("../discounts/entities/discount.entity");
 const order_item_entity_1 = require("../orders/entities/order-item.entity");
+const order_refund_entity_1 = require("../orders/entities/order-refund.entity");
 const order_entity_1 = require("../orders/entities/order.entity");
 const purchase_order_entity_1 = require("../procurement/entities/purchase-order.entity");
 const inventory_transaction_entity_1 = require("../products/entities/inventory-transaction.entity");
@@ -31,6 +32,7 @@ const user_entity_1 = require("../users/entities/user.entity");
 let ReportsService = class ReportsService {
     ordersRepository;
     orderItemsRepository;
+    orderRefundsRepository;
     productsRepository;
     usersRepository;
     inventoryTransactionsRepository;
@@ -41,9 +43,10 @@ let ReportsService = class ReportsService {
     riceDiagnosisHistoryRepository;
     poRepository;
     cache;
-    constructor(ordersRepository, orderItemsRepository, productsRepository, usersRepository, inventoryTransactionsRepository, discountsRepository, couponUsageRepository, categoriesRepository, commentsRepository, riceDiagnosisHistoryRepository, poRepository, cache) {
+    constructor(ordersRepository, orderItemsRepository, orderRefundsRepository, productsRepository, usersRepository, inventoryTransactionsRepository, discountsRepository, couponUsageRepository, categoriesRepository, commentsRepository, riceDiagnosisHistoryRepository, poRepository, cache) {
         this.ordersRepository = ordersRepository;
         this.orderItemsRepository = orderItemsRepository;
+        this.orderRefundsRepository = orderRefundsRepository;
         this.productsRepository = productsRepository;
         this.usersRepository = usersRepository;
         this.inventoryTransactionsRepository = inventoryTransactionsRepository;
@@ -57,9 +60,6 @@ let ReportsService = class ReportsService {
     }
     async getDashboard() {
         const revenueStatuses = [
-            order_entity_1.OrderStatus.CONFIRMED,
-            order_entity_1.OrderStatus.PROCESSING,
-            order_entity_1.OrderStatus.SHIPPING,
             order_entity_1.OrderStatus.DELIVERED,
             order_entity_1.OrderStatus.PARTIAL_DELIVERED,
         ];
@@ -89,7 +89,20 @@ let ReportsService = class ReportsService {
             }
             return qb.getRawOne();
         };
-        const [totalUsers, totalCustomers, activeCustomers, totalProducts, totalCategories, totalOrders, pendingOrders, cancelledOrders, deliveredOrders, paidOrders, revenueRow, todayOrders, todayRevenueRow, yesterdayRevenueRow, last7RevenueRow, last30RevenueRow, lowStockProducts, outOfStockProducts, expiredSoonProducts, activeDiscounts, couponUsageCount, inventoryValueRow, visibleReviews, avgReviewRow, totalDiagnoses,] = await Promise.all([
+        const refundQuery = (from, to) => {
+            const qb = this.orderRefundsRepository
+                .createQueryBuilder('refund')
+                .select('COALESCE(SUM(refund.amount), 0)', 'amount')
+                .where('refund.refund_status = :status', {
+                status: order_refund_entity_1.OrderRefundStatus.COMPLETED,
+            });
+            if (from)
+                qb.andWhere('refund.updated_at >= :from', { from });
+            if (to)
+                qb.andWhere('refund.updated_at < :to', { to });
+            return qb.getRawOne();
+        };
+        const [totalUsers, totalCustomers, activeCustomers, totalProducts, totalCategories, totalOrders, pendingOrders, cancelledOrders, deliveredOrders, paidOrders, revenueRow, refundRow, todayOrders, todayRevenueRow, todayRefundRow, yesterdayRevenueRow, yesterdayRefundRow, last7RevenueRow, last7RefundRow, last30RevenueRow, last30RefundRow, lowStockProducts, outOfStockProducts, expiredSoonProducts, activeDiscounts, couponUsageCount, inventoryValueRow, visibleReviews, avgReviewRow, totalDiagnoses,] = await Promise.all([
             this.usersRepository.count(),
             this.usersRepository.count({ where: { role: user_entity_1.UserRole.CUSTOMER } }),
             this.usersRepository.count({
@@ -111,14 +124,19 @@ let ReportsService = class ReportsService {
                 where: { paymentStatus: order_entity_1.PaymentStatus.PAID },
             }),
             revenueQuery(),
+            refundQuery(),
             this.ordersRepository
                 .createQueryBuilder('order')
                 .where('order.created_at >= :todayStart', { todayStart })
                 .getCount(),
             revenueQuery(todayStart),
+            refundQuery(todayStart),
             revenueQuery(yesterdayStart, todayStart),
+            refundQuery(yesterdayStart, todayStart),
             revenueQuery(last7DaysStart),
+            refundQuery(last7DaysStart),
             revenueQuery(last30DaysStart),
+            refundQuery(last30DaysStart),
             this.productsRepository.count({
                 where: { quantityAvailable: (0, typeorm_2.LessThanOrEqual)(10) },
             }),
@@ -425,9 +443,13 @@ let ReportsService = class ReportsService {
             order: { createdAt: 'DESC' },
             take: 8,
         });
-        const totalRevenue = Number(revenueRow?.revenue ?? 0);
-        const todayRevenue = Number(todayRevenueRow?.revenue ?? 0);
-        const yesterdayRevenue = Number(yesterdayRevenueRow?.revenue ?? 0);
+        const totalRevenue = Math.max(0, Number(revenueRow?.revenue ?? 0) - Number(refundRow?.amount ?? 0));
+        const todayRevenue = Math.max(0, Number(todayRevenueRow?.revenue ?? 0) - Number(todayRefundRow?.amount ?? 0));
+        const yesterdayRevenue = Math.max(0, Number(yesterdayRevenueRow?.revenue ?? 0) -
+            Number(yesterdayRefundRow?.amount ?? 0));
+        const last7Revenue = Math.max(0, Number(last7RevenueRow?.revenue ?? 0) - Number(last7RefundRow?.amount ?? 0));
+        const last30Revenue = Math.max(0, Number(last30RevenueRow?.revenue ?? 0) -
+            Number(last30RefundRow?.amount ?? 0));
         return {
             refreshedAt: now.toISOString(),
             filters: {
@@ -454,8 +476,8 @@ let ReportsService = class ReportsService {
                     : todayRevenue > 0
                         ? 100
                         : 0,
-                last7Revenue: Number(last7RevenueRow?.revenue ?? 0).toFixed(2),
-                last30Revenue: Number(last30RevenueRow?.revenue ?? 0).toFixed(2),
+                last7Revenue: last7Revenue.toFixed(2),
+                last30Revenue: last30Revenue.toFixed(2),
                 averageOrderValue: totalOrders > 0 ? (totalRevenue / totalOrders).toFixed(2) : '0.00',
                 lowStockProducts,
                 outOfStockProducts,
@@ -469,6 +491,10 @@ let ReportsService = class ReportsService {
                 visibleReviews,
                 averageRating: Number(avgReviewRow?.averageRating ?? 0).toFixed(2),
                 totalDiagnoses,
+            },
+            meta: {
+                revenuePolicy: 'Doanh thu tài chính chỉ tính đơn đã giao/đã giao một phần và trừ refund completed.',
+                refundPolicy: 'Chỉ order_refunds.refund_status = completed mới trừ doanh thu.',
             },
             topProducts,
             inventorySummary,
@@ -722,10 +748,8 @@ let ReportsService = class ReportsService {
     async getProfitability(query) {
         const { groupBy = 'product' } = query;
         const completedStatuses = [
-            order_entity_1.OrderStatus.CONFIRMED,
-            order_entity_1.OrderStatus.PROCESSING,
-            order_entity_1.OrderStatus.SHIPPING,
             order_entity_1.OrderStatus.DELIVERED,
+            order_entity_1.OrderStatus.PARTIAL_DELIVERED,
         ];
         const qb = this.orderItemsRepository
             .createQueryBuilder('item')
@@ -799,7 +823,27 @@ let ReportsService = class ReportsService {
                     marginPct: Math.round(marginPct * 100) / 100,
                 };
             });
-            return { items, meta: { page, limit, total, totalPages: Math.ceil(total / limit) } };
+            const unallocatedRefundRow = await this.orderRefundsRepository
+                .createQueryBuilder('refund')
+                .select('COALESCE(SUM(refund.amount), 0)', 'amount')
+                .where('refund.refund_status = :status', {
+                status: order_refund_entity_1.OrderRefundStatus.COMPLETED,
+            })
+                .andWhere('refund.return_id IS NULL')
+                .getRawOne();
+            return {
+                items,
+                meta: {
+                    page,
+                    limit,
+                    total,
+                    totalPages: Math.ceil(total / limit),
+                    revenuePolicy: 'Chỉ tính đơn đã giao/đã giao một phần; refund completed được ghi nhận qua ledger.',
+                    refundPolicy: 'Refund có returnId dùng để đối chiếu dòng hàng; refund không gắn dòng được báo ở unallocatedRefund.',
+                    cogsPolicy: 'COGS ưu tiên inventory transaction EXPORT, fallback avgCost/costPrice khi thiếu unit cost.',
+                    unallocatedRefund: Number(unallocatedRefundRow?.amount ?? 0),
+                },
+            };
         }
         const dateFormat = groupBy === 'month' ? '%Y-%m' : '%Y-%m-%d';
         qb
@@ -809,7 +853,17 @@ let ReportsService = class ReportsService {
             .groupBy('period')
             .orderBy('period', 'ASC');
         const rows = await qb.getRawMany();
-        return { items: rows.map((r) => ({ ...r, revenue: Number(r.revenue), soldQty: Number(r.soldQty) })) };
+        return {
+            items: rows.map((r) => ({
+                ...r,
+                revenue: Number(r.revenue),
+                soldQty: Number(r.soldQty),
+            })),
+            meta: {
+                revenuePolicy: 'Chỉ tính đơn đã giao/đã giao một phần.',
+                refundPolicy: 'Refund completed được quản lý trong order_refunds.',
+            },
+        };
     }
     async getAgingDebt(query) {
         const asOf = query.asOf ? new Date(query.asOf) : new Date();
@@ -916,16 +970,18 @@ exports.ReportsService = ReportsService = __decorate([
     (0, common_1.Injectable)(),
     __param(0, (0, typeorm_1.InjectRepository)(order_entity_1.OrderEntity)),
     __param(1, (0, typeorm_1.InjectRepository)(order_item_entity_1.OrderItemEntity)),
-    __param(2, (0, typeorm_1.InjectRepository)(product_entity_1.ProductEntity)),
-    __param(3, (0, typeorm_1.InjectRepository)(user_entity_1.UserEntity)),
-    __param(4, (0, typeorm_1.InjectRepository)(inventory_transaction_entity_1.InventoryTransactionEntity)),
-    __param(5, (0, typeorm_1.InjectRepository)(discount_entity_1.DiscountEntity)),
-    __param(6, (0, typeorm_1.InjectRepository)(coupon_usage_entity_1.CouponUsageEntity)),
-    __param(7, (0, typeorm_1.InjectRepository)(category_entity_1.CategoryEntity)),
-    __param(8, (0, typeorm_1.InjectRepository)(comment_entity_1.CommentEntity)),
-    __param(9, (0, typeorm_1.InjectRepository)(rice_diagnosis_history_entity_1.RiceDiagnosisHistoryEntity)),
-    __param(10, (0, typeorm_1.InjectRepository)(purchase_order_entity_1.PurchaseOrderEntity)),
+    __param(2, (0, typeorm_1.InjectRepository)(order_refund_entity_1.OrderRefundEntity)),
+    __param(3, (0, typeorm_1.InjectRepository)(product_entity_1.ProductEntity)),
+    __param(4, (0, typeorm_1.InjectRepository)(user_entity_1.UserEntity)),
+    __param(5, (0, typeorm_1.InjectRepository)(inventory_transaction_entity_1.InventoryTransactionEntity)),
+    __param(6, (0, typeorm_1.InjectRepository)(discount_entity_1.DiscountEntity)),
+    __param(7, (0, typeorm_1.InjectRepository)(coupon_usage_entity_1.CouponUsageEntity)),
+    __param(8, (0, typeorm_1.InjectRepository)(category_entity_1.CategoryEntity)),
+    __param(9, (0, typeorm_1.InjectRepository)(comment_entity_1.CommentEntity)),
+    __param(10, (0, typeorm_1.InjectRepository)(rice_diagnosis_history_entity_1.RiceDiagnosisHistoryEntity)),
+    __param(11, (0, typeorm_1.InjectRepository)(purchase_order_entity_1.PurchaseOrderEntity)),
     __metadata("design:paramtypes", [typeorm_2.Repository,
+        typeorm_2.Repository,
         typeorm_2.Repository,
         typeorm_2.Repository,
         typeorm_2.Repository,

@@ -44,6 +44,10 @@ export declare class ReportsController {
             averageRating: string;
             totalDiagnoses: number;
         };
+        meta: {
+            revenuePolicy: string;
+            refundPolicy: string;
+        };
         topProducts: any[];
         inventorySummary: any[];
         salesByDay: any[];
@@ -167,6 +171,10 @@ export declare class ReportsController {
             limit: number;
             total: number;
             totalPages: number;
+            revenuePolicy: string;
+            refundPolicy: string;
+            cogsPolicy: string;
+            unallocatedRefund: number;
         };
     } | {
         items: {
@@ -174,7 +182,16 @@ export declare class ReportsController {
             soldQty: number;
             period: string;
         }[];
-        meta?: undefined;
+        meta: {
+            revenuePolicy: string;
+            refundPolicy: string;
+            page?: undefined;
+            limit?: undefined;
+            total?: undefined;
+            totalPages?: undefined;
+            cogsPolicy?: undefined;
+            unallocatedRefund?: undefined;
+        };
     }>;
     getAgingDebt(query: QueryAgingDebtDto): Promise<{
         summary: {

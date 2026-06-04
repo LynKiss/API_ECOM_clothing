@@ -73,6 +73,23 @@ export class CommentsController {
 
   // ─── Admin endpoints ───────────────────────────────────────────────────────
 
+  @Get('me')
+  @ResponseMessage('Get my product reviews')
+  getMyReviews(
+    @User() currentUser: IUser,
+    @Query('page') page = '1',
+    @Query('limit') limit = '12',
+    @Query('status') status?: string,
+    @Query('search') search?: string,
+  ) {
+    return this.commentsService.findMyReviews(currentUser._id, {
+      page: Math.max(1, parseInt(page, 10) || 1),
+      limit: Math.min(100, Math.max(1, parseInt(limit, 10) || 12)),
+      status,
+      search,
+    });
+  }
+
   @RequirePermissions('manage_reviews')
   @Get('admin/stats')
   @ResponseMessage('Get review stats')

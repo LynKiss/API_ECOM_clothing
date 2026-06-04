@@ -83,6 +83,33 @@ export declare class NewsService {
             username: string;
         };
     }>;
+    findMyComments(userId: string, params: {
+        page: number;
+        limit: number;
+        status?: string;
+        search?: string;
+    }): Promise<{
+        items: {
+            id: string;
+            commentId: string;
+            newsId: string;
+            articleTitle: string | null;
+            articleSlug: string | null;
+            content: string;
+            imageUrls: never[];
+            likeCount: number;
+            dislikeCount: number;
+            status: NewsCommentStatus;
+            createdAt: Date;
+            updatedAt: Date;
+        }[];
+        meta: {
+            page: number;
+            limit: number;
+            total: number;
+            totalPages: number;
+        };
+    }>;
     likeNewsComment(commentId: string): Promise<{
         likeCount: number;
         dislikeCount: number;

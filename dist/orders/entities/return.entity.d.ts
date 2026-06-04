@@ -16,11 +16,14 @@ export declare class ReturnEntity {
     returnId: string;
     orderId: string;
     orderItemId: string;
+    returnQuantity: number;
     userId: string;
     reason: string;
     description: string | null;
     returnStatus: ReturnStatus;
     refundAmount: string | null;
+    maxRefundableAmount: string;
+    refundedQuantity: number;
     inspectionStatus: ReturnInspectionStatus;
     inspectionNote: string | null;
     inspectedBy: string | null;

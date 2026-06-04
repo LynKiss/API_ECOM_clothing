@@ -40,6 +40,14 @@ let CommentsController = class CommentsController {
     createReview(currentUser, productId, createReviewDto) {
         return this.commentsService.createReview(currentUser._id, productId, createReviewDto);
     }
+    getMyReviews(currentUser, page = '1', limit = '12', status, search) {
+        return this.commentsService.findMyReviews(currentUser._id, {
+            page: Math.max(1, parseInt(page, 10) || 1),
+            limit: Math.min(100, Math.max(1, parseInt(limit, 10) || 12)),
+            status,
+            search,
+        });
+    }
     getAdminStats() {
         return this.commentsService.getAdminStats();
     }
@@ -119,6 +127,18 @@ __decorate([
     __metadata("design:paramtypes", [Object, String, create_review_dto_1.CreateReviewDto]),
     __metadata("design:returntype", void 0)
 ], CommentsController.prototype, "createReview", null);
+__decorate([
+    (0, common_1.Get)('me'),
+    (0, customize_1.ResponseMessage)('Get my product reviews'),
+    __param(0, (0, customize_1.User)()),
+    __param(1, (0, common_1.Query)('page')),
+    __param(2, (0, common_1.Query)('limit')),
+    __param(3, (0, common_1.Query)('status')),
+    __param(4, (0, common_1.Query)('search')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Object, Object, String, String]),
+    __metadata("design:returntype", void 0)
+], CommentsController.prototype, "getMyReviews", null);
 __decorate([
     (0, customize_1.RequirePermissions)('manage_reviews'),
     (0, common_1.Get)('admin/stats'),

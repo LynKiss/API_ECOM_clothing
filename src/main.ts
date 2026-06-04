@@ -5,13 +5,18 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import { join } from 'node:path';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
+import { json, urlencoded } from 'express';
 import { AppModule } from './app.module';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { TransformInterceptor } from './core/transform.interceptor';
 
 async function bootstrap() {
-  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    bodyParser: false,
+  });
   const reflector = app.get(Reflector);
+  app.use(json({ limit: process.env.JSON_BODY_LIMIT ?? '20mb' }));
+  app.use(urlencoded({ extended: true, limit: process.env.URLENCODED_BODY_LIMIT ?? '20mb' }));
   app.use(helmet());
   app.use(cookieParser());
 

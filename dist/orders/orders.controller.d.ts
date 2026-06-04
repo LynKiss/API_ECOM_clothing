@@ -29,6 +29,10 @@ export declare class OrdersController {
         address: string;
         createdAt: Date;
         updatedAt: Date;
+        returnWindowDays: number;
+        returnDeadline: Date | null;
+        canCreateReturn: boolean;
+        returnBlockedReason: string | null;
         items: {
             id: string;
             productId: string;
@@ -36,10 +40,35 @@ export declare class OrdersController {
             sku: string | null;
             colorName: string | null;
             sizeName: string | null;
+            imageUrl: string | null;
             productName: string;
             quantity: number;
+            quantityDelivered: number;
+            deliveredQuantity: number;
+            returnableQuantity: number;
+            returnedQuantity: number;
+            returnWindowDays: number;
+            returnDeadline: Date | null;
+            canCreateReturn: boolean;
+            returnBlockedReason: string | null;
             unitPrice: string;
             lineTotal: string;
+        }[];
+        returns: {
+            id: string;
+            orderItemId: string;
+            returnQuantity: number;
+            reason: string;
+            description: string | null;
+            status: import("./entities/return.entity").ReturnStatus;
+            statusLabel: string;
+            inspectionStatus: import("./entities/return.entity").ReturnInspectionStatus;
+            refundAmount: string | null;
+            maxRefundableAmount: string;
+            returnDeadline: Date | null;
+            returnWindowDays: number;
+            createdAt: Date;
+            updatedAt: Date;
         }[];
         history: {
             id: string;
@@ -68,6 +97,10 @@ export declare class OrdersController {
         address: string;
         createdAt: Date;
         updatedAt: Date;
+        returnWindowDays: number;
+        returnDeadline: Date | null;
+        canCreateReturn: boolean;
+        returnBlockedReason: string | null;
         items: {
             id: string;
             productId: string;
@@ -75,10 +108,35 @@ export declare class OrdersController {
             sku: string | null;
             colorName: string | null;
             sizeName: string | null;
+            imageUrl: string | null;
             productName: string;
             quantity: number;
+            quantityDelivered: number;
+            deliveredQuantity: number;
+            returnableQuantity: number;
+            returnedQuantity: number;
+            returnWindowDays: number;
+            returnDeadline: Date | null;
+            canCreateReturn: boolean;
+            returnBlockedReason: string | null;
             unitPrice: string;
             lineTotal: string;
+        }[];
+        returns: {
+            id: string;
+            orderItemId: string;
+            returnQuantity: number;
+            reason: string;
+            description: string | null;
+            status: import("./entities/return.entity").ReturnStatus;
+            statusLabel: string;
+            inspectionStatus: import("./entities/return.entity").ReturnInspectionStatus;
+            refundAmount: string | null;
+            maxRefundableAmount: string;
+            returnDeadline: Date | null;
+            returnWindowDays: number;
+            createdAt: Date;
+            updatedAt: Date;
         }[];
         history: {
             id: string;
@@ -107,6 +165,10 @@ export declare class OrdersController {
         address: string;
         createdAt: Date;
         updatedAt: Date;
+        returnWindowDays: number;
+        returnDeadline: Date | null;
+        canCreateReturn: boolean;
+        returnBlockedReason: string | null;
         items: {
             id: string;
             productId: string;
@@ -114,10 +176,35 @@ export declare class OrdersController {
             sku: string | null;
             colorName: string | null;
             sizeName: string | null;
+            imageUrl: string | null;
             productName: string;
             quantity: number;
+            quantityDelivered: number;
+            deliveredQuantity: number;
+            returnableQuantity: number;
+            returnedQuantity: number;
+            returnWindowDays: number;
+            returnDeadline: Date | null;
+            canCreateReturn: boolean;
+            returnBlockedReason: string | null;
             unitPrice: string;
             lineTotal: string;
+        }[];
+        returns: {
+            id: string;
+            orderItemId: string;
+            returnQuantity: number;
+            reason: string;
+            description: string | null;
+            status: import("./entities/return.entity").ReturnStatus;
+            statusLabel: string;
+            inspectionStatus: import("./entities/return.entity").ReturnInspectionStatus;
+            refundAmount: string | null;
+            maxRefundableAmount: string;
+            returnDeadline: Date | null;
+            returnWindowDays: number;
+            createdAt: Date;
+            updatedAt: Date;
         }[];
         history: {
             id: string;
@@ -169,6 +256,10 @@ export declare class OrdersController {
         address: string;
         createdAt: Date;
         updatedAt: Date;
+        returnWindowDays: number;
+        returnDeadline: Date | null;
+        canCreateReturn: boolean;
+        returnBlockedReason: string | null;
         items: {
             id: string;
             productId: string;
@@ -176,10 +267,35 @@ export declare class OrdersController {
             sku: string | null;
             colorName: string | null;
             sizeName: string | null;
+            imageUrl: string | null;
             productName: string;
             quantity: number;
+            quantityDelivered: number;
+            deliveredQuantity: number;
+            returnableQuantity: number;
+            returnedQuantity: number;
+            returnWindowDays: number;
+            returnDeadline: Date | null;
+            canCreateReturn: boolean;
+            returnBlockedReason: string | null;
             unitPrice: string;
             lineTotal: string;
+        }[];
+        returns: {
+            id: string;
+            orderItemId: string;
+            returnQuantity: number;
+            reason: string;
+            description: string | null;
+            status: import("./entities/return.entity").ReturnStatus;
+            statusLabel: string;
+            inspectionStatus: import("./entities/return.entity").ReturnInspectionStatus;
+            refundAmount: string | null;
+            maxRefundableAmount: string;
+            returnDeadline: Date | null;
+            returnWindowDays: number;
+            createdAt: Date;
+            updatedAt: Date;
         }[];
         history: {
             id: string;
@@ -245,6 +361,10 @@ export declare class OrdersController {
         address: string;
         createdAt: Date;
         updatedAt: Date;
+        returnWindowDays: number;
+        returnDeadline: Date | null;
+        canCreateReturn: boolean;
+        returnBlockedReason: string | null;
         items: {
             id: string;
             productId: string;
@@ -252,10 +372,35 @@ export declare class OrdersController {
             sku: string | null;
             colorName: string | null;
             sizeName: string | null;
+            imageUrl: string | null;
             productName: string;
             quantity: number;
+            quantityDelivered: number;
+            deliveredQuantity: number;
+            returnableQuantity: number;
+            returnedQuantity: number;
+            returnWindowDays: number;
+            returnDeadline: Date | null;
+            canCreateReturn: boolean;
+            returnBlockedReason: string | null;
             unitPrice: string;
             lineTotal: string;
+        }[];
+        returns: {
+            id: string;
+            orderItemId: string;
+            returnQuantity: number;
+            reason: string;
+            description: string | null;
+            status: import("./entities/return.entity").ReturnStatus;
+            statusLabel: string;
+            inspectionStatus: import("./entities/return.entity").ReturnInspectionStatus;
+            refundAmount: string | null;
+            maxRefundableAmount: string;
+            returnDeadline: Date | null;
+            returnWindowDays: number;
+            createdAt: Date;
+            updatedAt: Date;
         }[];
         history: {
             id: string;
@@ -284,6 +429,10 @@ export declare class OrdersController {
         address: string;
         createdAt: Date;
         updatedAt: Date;
+        returnWindowDays: number;
+        returnDeadline: Date | null;
+        canCreateReturn: boolean;
+        returnBlockedReason: string | null;
         items: {
             id: string;
             productId: string;
@@ -291,10 +440,35 @@ export declare class OrdersController {
             sku: string | null;
             colorName: string | null;
             sizeName: string | null;
+            imageUrl: string | null;
             productName: string;
             quantity: number;
+            quantityDelivered: number;
+            deliveredQuantity: number;
+            returnableQuantity: number;
+            returnedQuantity: number;
+            returnWindowDays: number;
+            returnDeadline: Date | null;
+            canCreateReturn: boolean;
+            returnBlockedReason: string | null;
             unitPrice: string;
             lineTotal: string;
+        }[];
+        returns: {
+            id: string;
+            orderItemId: string;
+            returnQuantity: number;
+            reason: string;
+            description: string | null;
+            status: import("./entities/return.entity").ReturnStatus;
+            statusLabel: string;
+            inspectionStatus: import("./entities/return.entity").ReturnInspectionStatus;
+            refundAmount: string | null;
+            maxRefundableAmount: string;
+            returnDeadline: Date | null;
+            returnWindowDays: number;
+            createdAt: Date;
+            updatedAt: Date;
         }[];
         history: {
             id: string;
@@ -323,6 +497,10 @@ export declare class OrdersController {
         address: string;
         createdAt: Date;
         updatedAt: Date;
+        returnWindowDays: number;
+        returnDeadline: Date | null;
+        canCreateReturn: boolean;
+        returnBlockedReason: string | null;
         items: {
             id: string;
             productId: string;
@@ -330,10 +508,35 @@ export declare class OrdersController {
             sku: string | null;
             colorName: string | null;
             sizeName: string | null;
+            imageUrl: string | null;
             productName: string;
             quantity: number;
+            quantityDelivered: number;
+            deliveredQuantity: number;
+            returnableQuantity: number;
+            returnedQuantity: number;
+            returnWindowDays: number;
+            returnDeadline: Date | null;
+            canCreateReturn: boolean;
+            returnBlockedReason: string | null;
             unitPrice: string;
             lineTotal: string;
+        }[];
+        returns: {
+            id: string;
+            orderItemId: string;
+            returnQuantity: number;
+            reason: string;
+            description: string | null;
+            status: import("./entities/return.entity").ReturnStatus;
+            statusLabel: string;
+            inspectionStatus: import("./entities/return.entity").ReturnInspectionStatus;
+            refundAmount: string | null;
+            maxRefundableAmount: string;
+            returnDeadline: Date | null;
+            returnWindowDays: number;
+            createdAt: Date;
+            updatedAt: Date;
         }[];
         history: {
             id: string;
@@ -362,6 +565,10 @@ export declare class OrdersController {
         address: string;
         createdAt: Date;
         updatedAt: Date;
+        returnWindowDays: number;
+        returnDeadline: Date | null;
+        canCreateReturn: boolean;
+        returnBlockedReason: string | null;
         items: {
             id: string;
             productId: string;
@@ -369,10 +576,35 @@ export declare class OrdersController {
             sku: string | null;
             colorName: string | null;
             sizeName: string | null;
+            imageUrl: string | null;
             productName: string;
             quantity: number;
+            quantityDelivered: number;
+            deliveredQuantity: number;
+            returnableQuantity: number;
+            returnedQuantity: number;
+            returnWindowDays: number;
+            returnDeadline: Date | null;
+            canCreateReturn: boolean;
+            returnBlockedReason: string | null;
             unitPrice: string;
             lineTotal: string;
+        }[];
+        returns: {
+            id: string;
+            orderItemId: string;
+            returnQuantity: number;
+            reason: string;
+            description: string | null;
+            status: import("./entities/return.entity").ReturnStatus;
+            statusLabel: string;
+            inspectionStatus: import("./entities/return.entity").ReturnInspectionStatus;
+            refundAmount: string | null;
+            maxRefundableAmount: string;
+            returnDeadline: Date | null;
+            returnWindowDays: number;
+            createdAt: Date;
+            updatedAt: Date;
         }[];
         history: {
             id: string;
@@ -401,6 +633,10 @@ export declare class OrdersController {
         address: string;
         createdAt: Date;
         updatedAt: Date;
+        returnWindowDays: number;
+        returnDeadline: Date | null;
+        canCreateReturn: boolean;
+        returnBlockedReason: string | null;
         items: {
             id: string;
             productId: string;
@@ -408,10 +644,35 @@ export declare class OrdersController {
             sku: string | null;
             colorName: string | null;
             sizeName: string | null;
+            imageUrl: string | null;
             productName: string;
             quantity: number;
+            quantityDelivered: number;
+            deliveredQuantity: number;
+            returnableQuantity: number;
+            returnedQuantity: number;
+            returnWindowDays: number;
+            returnDeadline: Date | null;
+            canCreateReturn: boolean;
+            returnBlockedReason: string | null;
             unitPrice: string;
             lineTotal: string;
+        }[];
+        returns: {
+            id: string;
+            orderItemId: string;
+            returnQuantity: number;
+            reason: string;
+            description: string | null;
+            status: import("./entities/return.entity").ReturnStatus;
+            statusLabel: string;
+            inspectionStatus: import("./entities/return.entity").ReturnInspectionStatus;
+            refundAmount: string | null;
+            maxRefundableAmount: string;
+            returnDeadline: Date | null;
+            returnWindowDays: number;
+            createdAt: Date;
+            updatedAt: Date;
         }[];
         history: {
             id: string;

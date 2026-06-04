@@ -42,6 +42,30 @@ export declare class CommentsController {
         createdAt: Date;
         updatedAt: Date;
     }>;
+    getMyReviews(currentUser: IUser, page?: string, limit?: string, status?: string, search?: string): Promise<{
+        items: {
+            id: string;
+            commentId: string;
+            productId: string;
+            productName: string | null;
+            productSlug: string | null;
+            orderItemId: string | null;
+            content: string;
+            rating: number | null;
+            imageUrls: never[];
+            likeCount: number;
+            dislikeCount: number;
+            status: import("./entities/comment.entity").ProductCommentStatus;
+            createdAt: Date;
+            updatedAt: Date;
+        }[];
+        meta: {
+            page: number;
+            limit: number;
+            total: number;
+            totalPages: number;
+        };
+    }>;
     getAdminStats(): Promise<{
         total: number;
         totalVisible: number;
